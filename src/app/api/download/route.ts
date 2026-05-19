@@ -83,6 +83,6 @@ export async function GET(req: NextRequest) {
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error("Download error:", errorMessage);
-    return new NextResponse("Internal Server Error", { status: 500 });
+    return new NextResponse(`Download error: ${errorMessage}`, { status: 500 });
   }
 }

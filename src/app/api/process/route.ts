@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error("Process error:", errorMessage);
     return NextResponse.json(
-      { error: "Failed to process search. Please try again." },
+      { error: `Process error: ${errorMessage}` },
       { status: 500 }
     );
   }

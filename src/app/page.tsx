@@ -53,9 +53,16 @@ export default function Home() {
         body: JSON.stringify({ input: query, type: "text" }),
       });
 
-      if (!res.ok) throw new Error("Failed to process request.");
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
+      let data;
+      try {
+        data = await res.json();
+      } catch {
+        // Not a JSON response
+      }
+
+      if (!res.ok) {
+        throw new Error(data?.error || `Failed to process request (Status ${res.status}).`);
+      }
 
       if (Array.isArray(data)) {
         setResults(data);
