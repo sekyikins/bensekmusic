@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import ytDlp from "yt-dlp-exec";
+import ytdl from "@distube/ytdl-core";
 
 export async function GET(req: NextRequest) {
   try {
@@ -12,23 +12,26 @@ export async function GET(req: NextRequest) {
     if (!targetUrl) {
       return new NextResponse("Missing video URL", { status: 400 });
     }
+
+    // 1. Get the streaming formats from ytdl
+    const info = await ytdl.getInfo(targetUrl);
     
-    // Choose format: pre-merged mp4 for video, or m4a for audio
-    const format = type === "video" ? "best[ext=mp4]/best" : "m4a/bestaudio/best";
+    let format;
+    if (type === "video") {
+      // Find the highest resolution mp4 format that has both video and audio
+      format = ytdl.chooseFormat(info.formats, {
+        filter: "audioandvideo",
+        quality: "highestvideo",
+      });
+    } else {
+      // Find highest quality audio only format
+      format = ytdl.chooseFormat(info.formats, {
+        filter: "audioonly",
+        quality: "highestaudio",
+      });
+    }
 
-    // 1. Get the direct streaming URL from yt-dlp
-    const result = await ytDlp(targetUrl, {
-      dumpSingleJson: true,
-      format: format,
-      noWarnings: true,
-      noCallHome: true,
-      noCheckCertificate: true,
-      youtubeSkipDashManifest: true,
-    } as Record<string, unknown>);
-
-    // Extract the exact streaming URL from the result
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const directUrl = (result as any).url || ((result as any).requested_downloads && (result as any).requested_downloads[0]?.url);
+    const directUrl = format?.url;
 
     if (!directUrl) {
       throw new Error("Could not extract direct stream URL.");
@@ -41,12 +44,10 @@ export async function GET(req: NextRequest) {
       proxyHeaders.set("range", range);
     }
     
-    // Some servers require a User-Agent
-    proxyHeaders.set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+    proxyHeaders.set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
 
     const response = await fetch(directUrl, {
       headers: proxyHeaders,
-      // We don't want to follow redirects if it breaks streaming, but typically fetch handles it fine.
     });
 
     if (!response.ok && response.status !== 206) {
@@ -56,7 +57,6 @@ export async function GET(req: NextRequest) {
     // 3. Forward the response headers back to the client
     const resHeaders = new Headers();
     
-    // Copy essential headers from the proxied response (like Content-Length, Content-Range, Accept-Ranges)
     ["content-length", "content-range", "accept-ranges", "content-type"].forEach(header => {
       if (response.headers.has(header)) {
         resHeaders.set(header, response.headers.get(header)!);
@@ -66,7 +66,6 @@ export async function GET(req: NextRequest) {
     const contentType = type === "video" ? "video/mp4" : "audio/mp4";
     const ext = type === "video" ? "mp4" : "m4a";
 
-    // Override content-type to ensure browser treats it properly
     resHeaders.set("Content-Type", contentType);
 
     const baseFilename = filenameParam || `sekmusic-dl`;
