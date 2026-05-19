@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 
+const INVIDIOUS_INSTANCES = [
+  "https://inv.thepixora.com",
+  "https://invidious.lunar.icu",
+  "https://yewtu.be",
+  "https://inv.nadeko.net"
+];
+
 export async function POST(req: NextRequest) {
   try {
     const { input } = await req.json();
@@ -43,54 +50,35 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Failed to extract metadata from YouTube URL." }, { status: 400 });
       }
     } else {
-      const ddgUrl = `https://html.duckduckgo.com/html/?q=site:youtube.com+${encodeURIComponent(searchString)}`;
-      const res = await fetch(ddgUrl, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-      });
+      try {
+        const winner = await Promise.any(
+          INVIDIOUS_INSTANCES.map(async (baseUri) => {
+            const searchUrl = `${baseUri}/api/v1/search?q=${encodeURIComponent(searchString)}&type=video`;
+            const response = await fetch(searchUrl, { signal: AbortSignal.timeout(4000) });
+            if (!response.ok) throw new Error(`Status ${response.status}`);
+            const data = await response.json();
+            if (Array.isArray(data) && data.length > 0) {
+              return data;
+            }
+            throw new Error("Empty results");
+          })
+        );
 
-      if (!res.ok) {
-        throw new Error(`Failed to fetch search results from DuckDuckGo (Status ${res.status}).`);
+        const output = winner.slice(0, 5).map((video: any) => ({
+          id: video.videoId,
+          title: video.title,
+          artist: video.author || "Unknown Artist",
+          duration: video.lengthSeconds || 0,
+          thumbnail: `https://i.ytimg.com/vi/${video.videoId}/hqdefault.jpg`,
+          url: `https://youtube.com/watch?v=${video.videoId}`,
+          extractor: "youtube",
+        }));
+
+        return NextResponse.json(output);
+      } catch (poolError) {
+        console.error("Invidious search pool failed:", poolError);
+        return NextResponse.json({ error: "Failed to fetch search results from resilient search pool. Please try again." }, { status: 500 });
       }
-
-      const html = await res.text();
-      const matches = [...html.matchAll(/watch\?v=([a-zA-Z0-9_-]{11})/g)].map(m => m[1]);
-      const uniqueVideoIds = [...new Set(matches)].slice(0, 5);
-
-      if (uniqueVideoIds.length === 0) {
-        return NextResponse.json({ error: "No results found" }, { status: 404 });
-      }
-
-      const output = await Promise.all(uniqueVideoIds.map(async (videoId) => {
-        try {
-          const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
-          const oembedRes = await fetch(oembedUrl);
-          if (!oembedRes.ok) throw new Error();
-          const oembedData = await oembedRes.json();
-          return {
-            id: videoId,
-            title: oembedData.title,
-            artist: oembedData.author_name || "Unknown Artist",
-            duration: 0,
-            thumbnail: oembedData.thumbnail_url || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
-            url: `https://youtube.com/watch?v=${videoId}`,
-            extractor: "youtube",
-          };
-        } catch {
-          return {
-            id: videoId,
-            title: "YouTube Video",
-            artist: "Unknown Artist",
-            duration: 0,
-            thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
-            url: `https://youtube.com/watch?v=${videoId}`,
-            extractor: "youtube",
-          };
-        }
-      }));
-
-      return NextResponse.json(output);
     }
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
