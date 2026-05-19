@@ -1,6 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import ytDlp from "yt-dlp-exec";
 
+interface YtDlpEntry {
+  id: string;
+  title: string;
+  uploader?: string;
+  artist?: string;
+  duration?: number;
+  thumbnail?: string;
+  thumbnails?: { url: string }[];
+  webpage_url?: string;
+  original_url?: string;
+  extractor?: string;
+}
+
+interface YtDlpResult extends YtDlpEntry {
+  entries?: YtDlpEntry[];
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { input, type } = await req.json();
@@ -17,7 +34,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Use yt-dlp to extract metadata
-    const result: any = await ytDlp(searchString, {
+    const result = await (ytDlp(searchString, {
       dumpSingleJson: true,
       noWarnings: true,
       noCallHome: true,
@@ -25,11 +42,11 @@ export async function POST(req: NextRequest) {
       preferFreeFormats: true,
       youtubeSkipDashManifest: true,
       playlistEnd: 5,
-    } as any);
+    } as Record<string, unknown>) as Promise<YtDlpResult>);
 
     // If it's a search, yt-dlp returns an entries array. Sometimes it returns multiple lines of JSON,
     // so ytDlp-exec handles it. If it's a playlist or search, `result` might be an array or have `.entries`.
-    let entries = [];
+    let entries: YtDlpEntry[] = [];
     if (Array.isArray(result)) {
       entries = result;
     } else if (result && result.entries) {
@@ -38,13 +55,13 @@ export async function POST(req: NextRequest) {
       entries = [result];
     }
 
-    const validEntries = entries.filter((entry: any) => entry && entry.id && entry.title);
+    const validEntries = entries.filter((entry: YtDlpEntry) => entry && entry.id && entry.title);
 
     if (validEntries.length === 0) {
       return NextResponse.json({ error: "No results found" }, { status: 404 });
     }
 
-    const output = validEntries.map((videoData: any) => ({
+    const output = validEntries.map((videoData: YtDlpEntry) => ({
       id: videoData.id,
       title: videoData.title,
       artist: videoData.uploader || videoData.artist || "Unknown Artist",
@@ -55,8 +72,9 @@ export async function POST(req: NextRequest) {
     }));
 
     return NextResponse.json(output);
-  } catch (error: any) {
-    console.error("Process error:", error);
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error("Process error:", errorMessage);
     return NextResponse.json(
       { error: "Failed to process request. Ensure yt-dlp is available or try again later." },
       { status: 500 }

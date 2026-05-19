@@ -7,6 +7,9 @@ const outfit = Outfit({ subsets: ["latin"] });
 export const metadata: Metadata = {
   title: "SekMusic | Ultimate Media Processing System",
   description: "Extract, process, and stream music from anywhere. High quality audio, video, and lyrics.",
+  icons: {
+    icon: "/favicon.jpg",
+  },
 };
 
 export default function RootLayout({

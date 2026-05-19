@@ -1,39 +1,40 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { Search, Link as LinkIcon, Upload, Music, Loader2, Play, Download, ExternalLink } from "lucide-react";
+import Image from "next/image";
+import { motion, AnimatePresence, Variants } from "framer-motion";
+import { Search, Link as LinkIcon, Upload, Music, Loader2, Play, Download, ExternalLink, Sparkles, AudioLines } from "lucide-react";
+
+interface SearchResult {
+  id: string;
+  title: string;
+  artist: string;
+  duration: number;
+  thumbnail: string | undefined;
+  url: string;
+  extractor: string;
+}
 
 export default function Home() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
-  const [results, setResults] = useState<any[] | null>(null);
-  const [selectedResult, setSelectedResult] = useState<any | null>(null);
+  const [results, setResults] = useState<SearchResult[] | null>(null);
+  const [selectedResult, setSelectedResult] = useState<SearchResult | null>(null);
+  const [isFocused, setIsFocused] = useState(false);
 
   const getCleanSearchQuery = (title: string, artist: string) => {
-    // Remove "Music", "VEVO", "Official" from artist name to avoid redundant search terms
     const cleanArtist = artist.replace(/\s*(music|vevo|official|channel|records|productions)$/gi, '').trim();
-    
     let clean = title;
-    
-    // Remove (Official Video), etc.
     clean = clean.replace(/[\(\[].*?(official|lyric|audio|video|visualizer|full|hd|4k|remastered|version|prod|explicit).*?[\)\]]/gi, '');
-    
-    // If title doesn't seem to contain the cleaned artist name, append it
     if (!clean.toLowerCase().includes(cleanArtist.toLowerCase())) {
       clean = `${cleanArtist} ${clean}`;
     }
-
     return encodeURIComponent(
-      clean
-        .replace(/\s*-\s*Topic/gi, '')
-        .replace(/\s*\|\s*SekMusic/gi, '')
-        .replace(/[-|]/g, ' ') // Replace dashes and bars with spaces
-        .replace(/\s+/g, ' ')
-        .trim()
+      clean.replace(/\s*-\s*Topic/gi, '').replace(/\s*\|\s*SekMusic/gi, '').replace(/[-|]/g, ' ').replace(/\s+/g, ' ').trim()
     );
   };
+  
   const [error, setError] = useState<string | null>(null);
 
   const handleSearch = async (e: React.FormEvent) => {
@@ -48,16 +49,11 @@ export default function Home() {
     try {
       const res = await fetch("/api/process", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ input: query, type: "text" }),
       });
 
-      if (!res.ok) {
-        throw new Error("Failed to process request.");
-      }
-
+      if (!res.ok) throw new Error("Failed to process request.");
       const data = await res.json();
       if (data.error) throw new Error(data.error);
 
@@ -67,8 +63,8 @@ export default function Home() {
       } else {
         setSelectedResult(data);
       }
-    } catch (err: any) {
-      setError(err.message || "An unexpected error occurred.");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "An unexpected error occurred.");
     } finally {
       setLoading(false);
     }
@@ -88,18 +84,13 @@ export default function Home() {
       const formData = new FormData();
       formData.append("file", file);
 
-      // 1. Recognize the audio
-      const recRes = await fetch("/api/recognize", {
-        method: "POST",
-        body: formData,
-      });
+      const recRes = await fetch("/api/recognize", { method: "POST", body: formData });
       if (!recRes.ok) throw new Error("Failed to recognize media format.");
       const recData = await recRes.json();
       
       const identifiedQuery = recData.identifiedQuery;
       setQuery(identifiedQuery);
 
-      // 2. Fetch the metadata using the identified query
       const res = await fetch("/api/process", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -116,8 +107,8 @@ export default function Home() {
       } else {
         setSelectedResult(data);
       }
-    } catch (err: any) {
-      setError(err.message || "An unexpected error occurred.");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "An unexpected error occurred.");
       setQuery("");
     } finally {
       setLoading(false);
@@ -125,243 +116,340 @@ export default function Home() {
     }
   };
 
-  return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-4">
-      {/* Hero Section */}
-      <motion.div 
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6 }}
-        className="w-full max-w-4xl flex flex-col items-center text-center space-y-6 mb-12"
-      >
-        <div className="inline-flex items-center justify-center p-3 glass-panel rounded-full mb-4 animate-float">
-          <Music className="w-8 h-8 text-pink-500" />
-        </div>
-        <h1 className="text-5xl md:text-7xl font-bold tracking-tight">
-          <span className="gradient-text">SekMusic</span> Platform
-        </h1>
-        <p className="text-lg md:text-xl text-gray-400 max-w-2xl">
-          The ultimate media processing system. Drop a link, type a song name, or upload media to extract high-quality audio and video.
-        </p>
-      </motion.div>
+  const containerVariants: Variants = {
+    hidden: { opacity: 0 },
+    show: {
+      opacity: 1,
+      transition: { staggerChildren: 0.1 }
+    }
+  };
 
-      {/* Input Section */}
+  const itemVariants: Variants = {
+    hidden: { opacity: 0, y: 20 },
+    show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 300, damping: 24 } }
+  };
+
+  return (
+    <div className="min-h-screen flex flex-col items-center pt-24 sm:pt-32 pb-20 p-4 selection:bg-pink-500/30 relative">
+      {/* Dynamic Background Elements */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden -z-20">
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[80vw] h-[50vh] bg-linear-to-b from-purple-900/20 to-transparent blur-3xl opacity-50" />
+      </div>
+
       <motion.div 
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, delay: 0.2 }}
-        className="w-full max-w-2xl px-4 sm:px-0"
+        variants={containerVariants}
+        initial="hidden"
+        animate="show"
+        className="w-full max-w-3xl flex flex-col items-center relative z-10"
       >
-        <div className="w-full relative z-10">
-          <form onSubmit={handleSearch} className="flex flex-col gap-4">
-            {/* Search Input Bar */}
-            <div className="flex items-center w-full bg-black/40 backdrop-blur-md rounded-2xl border border-white/10 hover:border-white/20 focus-within:border-primary/50 focus-within:bg-black/60 transition-all p-2 shadow-2xl">
-              <div className="pl-4 pr-3 text-gray-400">
-                <Search className="w-6 h-6" />
+        {/* Hero Section */}
+        {(selectedResult || results) && (
+          <div className="flex gap-2 items-center justify-center p-4">
+          <motion.div 
+            className="inline-flex items-center justify-center p-4 rounded-3xl bg-white/5 border border-white/10 shadow-[0_0_40px_-10px_rgba(236,72,153,0.3)] backdrop-blur-xl"
+            whileHover={{ scale: 1.05, rotate: 5 }}
+            transition={{ type: "spring", stiffness: 400, damping: 10 }}
+          >
+            <AudioLines className="w-10 h-10 text-pink-400" />
+          </motion.div>
+          <h1 className="text-5xl sm:text-7xl font-extrabold tracking-tighter">
+              <span className="bg-clip-text text-transparent bg-linear-to-br from-white via-white to-gray-500 drop-shadow-sm">Sek</span>
+              <span className="bg-clip-text text-transparent bg-linear-to-r from-purple-400 via-pink-500 to-rose-500 drop-shadow-[0_0_30px_rgba(236,72,153,0.4)]">Music</span>
+            </h1>
+          </div>
+        )}
+        {!selectedResult && !results && (
+          <motion.div variants={itemVariants} className="text-center space-y-6 mb-12 w-full">
+            <motion.div 
+              className="inline-flex items-center justify-center p-4 rounded-3xl bg-white/5 border border-white/10 shadow-[0_0_40px_-10px_rgba(236,72,153,0.3)] backdrop-blur-xl mb-4"
+              whileHover={{ scale: 1.05, rotate: 5 }}
+              transition={{ type: "spring", stiffness: 400, damping: 10 }}
+            >
+              <AudioLines className="w-10 h-10 text-pink-400" />
+            </motion.div>
+            <h1 className="text-5xl sm:text-7xl font-extrabold tracking-tighter">
+              <span className="bg-clip-text text-transparent bg-linear-to-br from-white via-white to-gray-500 drop-shadow-sm">Sek</span>
+              <span className="bg-clip-text text-transparent bg-linear-to-r from-purple-400 via-pink-500 to-rose-500 drop-shadow-[0_0_30px_rgba(236,72,153,0.4)]">Music</span>
+            </h1>
+            <p className="text-lg sm:text-xl text-gray-400 max-w-2xl mx-auto font-medium leading-relaxed">
+              Experience the ultimate audio extraction engine. Instantly process streams, analyze files, and retrieve master-quality metadata.
+            </p>
+          </motion.div>
+        )}
+
+        {/* Input Section */}
+        <motion.div variants={itemVariants} className={`w-full transition-all duration-700 ${selectedResult || results ? 'mb-10 scale-95 opacity-80 hover:opacity-100 hover:scale-100' : ''}`}>
+          <form onSubmit={handleSearch} className="flex flex-col gap-5 w-full relative">
+            <div 
+              className={`relative flex items-center w-full rounded-3xl transition-all duration-500
+                ${isFocused ? 'bg-black/60 shadow-[0_0_0_1px_rgba(236,72,153,0.5),0_10px_40px_-10px_rgba(236,72,153,0.2)]' : 'bg-black/40 shadow-xl border border-white/10'}
+                backdrop-blur-2xl p-2 sm:p-3 z-20 overflow-hidden
+              `}
+            >
+              {/* Animated subtle gradient border effect internally */}
+              {isFocused && (
+                <div className="absolute inset-0 bg-linear-to-r from-purple-500/10 via-pink-500/10 to-rose-500/10 blur-xl z-0" />
+              )}
+              
+              <div className="pl-4 pr-3 text-gray-400 relative z-10 transition-colors duration-300">
+                {loading ? <Loader2 className="w-6 h-6 animate-spin text-pink-400" /> : <Search className={`w-6 h-6 ${isFocused ? 'text-pink-400' : ''}`} />}
               </div>
+              
               <input
                 type="text"
                 value={query}
+                onFocus={() => setIsFocused(true)}
+                onBlur={() => setIsFocused(false)}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search for a song, artist, or paste a URL..."
-                style={{ color: "white" }}
-                className="flex-1 bg-transparent border-none outline-none py-3 sm:py-4 text-lg placeholder-gray-500 focus:ring-0 min-w-0"
+                placeholder="Paste a URL, search a track, or drop an audio file..."
+                className="flex-1 bg-transparent border-none outline-none py-3 text-lg text-white placeholder-gray-500 focus:ring-0 min-w-0 relative z-10 font-medium"
                 disabled={loading}
               />
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex items-center justify-around w-full mt-2">
-              <div className="flex items-center gap-3">
-                <button type="button" className="flex items-center gap-2 px-4 py-3 bg-white/5 hover:bg-white/10 cursor-pointer rounded-xl transition-colors text-gray-400 hover:text-white border border-white/5 backdrop-blur-sm">
+              
+              <div className="hidden sm:flex items-center gap-2 pr-2 relative z-10">
+                <motion.button 
+                  whileHover={{ scale: 1.05, backgroundColor: "rgba(255,255,255,0.15)" }}
+                  whileTap={{ scale: 0.95 }}
+                  type="button" 
+                  className="flex items-center justify-center p-3 bg-white/5 cursor-pointer rounded-2xl transition-colors text-gray-300"
+                  title="Paste Link"
+                >
                   <LinkIcon className="w-5 h-5" /> 
-                  <span className="hidden sm:inline font-medium">Link</span>
-                </button>
-                <input 
-                  type="file" 
-                  accept="audio/*,video/*" 
-                  ref={fileInputRef} 
-                  onChange={handleFileUpload} 
-                  className="hidden" 
-                />
-                <button 
+                </motion.button>
+                <input type="file" accept="audio/*,video/*" ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
+                <motion.button 
+                  whileHover={{ scale: 1.05, backgroundColor: "rgba(255,255,255,0.15)" }}
+                  whileTap={{ scale: 0.95 }}
                   type="button" 
                   onClick={() => fileInputRef.current?.click()}
-                  className="flex items-center gap-2 px-4 py-3 bg-white/5 hover:bg-white/10 cursor-pointer rounded-xl transition-colors text-gray-400 hover:text-white border border-white/5 backdrop-blur-sm"
+                  className="flex items-center justify-center p-3 bg-white/5 cursor-pointer rounded-2xl transition-colors text-gray-300"
+                  title="Upload Audio"
                 >
                   <Upload className="w-5 h-5" /> 
-                  <span className="hidden sm:inline font-medium">Upload</span>
-                </button>
+                </motion.button>
               </div>
-              
-              <button 
+
+              <motion.button 
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.95 }}
                 type="submit" 
                 disabled={loading || !query.trim()}
-                className="bg-white text-black px-8 py-3.5 cursor-pointer rounded-xl font-bold hover:bg-gray-200 transition-all disabled:cursor-not-allowed flex items-center justify-center min-w-[140px] active:scale-95 shadow-[0_0_20px_rgba(255,255,255,0.3)] hover:shadow-[0_0_30px_rgba(255,255,255,0.5)]"
+                className="bg-white text-black px-6 sm:px-8 py-3 sm:py-4 ml-2 cursor-pointer rounded-2xl font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center relative z-10 hover:shadow-[0_0_20px_rgba(255,255,255,0.4)]"
               >
-                {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : "Extract"}
+                <span className="hidden sm:inline">{loading ? "Processing" : "Extract"}</span>
+                <span className="sm:hidden"><Sparkles className="w-5 h-5" /></span>
+              </motion.button>
+            </div>
+            
+            {/* Mobile Actions */}
+            <div className="flex sm:hidden items-center justify-center gap-3 w-full">
+              <button type="button" className="flex-1 flex justify-center items-center gap-2 py-3 bg-white/5 rounded-2xl text-gray-300 border border-white/5 backdrop-blur-md font-medium text-sm">
+                <LinkIcon className="w-4 h-4" /> Paste Link
+              </button>
+              <button type="button" onClick={() => fileInputRef.current?.click()} className="flex-1 flex justify-center items-center gap-2 py-3 bg-white/5 rounded-2xl text-gray-300 border border-white/5 backdrop-blur-md font-medium text-sm">
+                <Upload className="w-4 h-4" /> Upload File
               </button>
             </div>
           </form>
-        </div>
-      </motion.div>
+        </motion.div>
 
-      {/* Results Section */}
-      <AnimatePresence>
-        {error && (
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.9 }}
-            className="mt-8 p-4 bg-red-500/20 border border-red-500/50 rounded-2xl text-red-200 w-full max-w-2xl text-center"
-          >
-            {error}
-          </motion.div>
-        )}
+        {/* Results Section */}
+        <AnimatePresence mode="wait">
+          {error && (
+            <motion.div
+              key="error"
+              initial={{ opacity: 0, y: 10, height: 0 }}
+              animate={{ opacity: 1, y: 0, height: "auto" }}
+              exit={{ opacity: 0, y: -10, height: 0 }}
+              className="p-4 bg-red-500/10 border border-red-500/30 rounded-2xl text-red-400 w-full text-center font-medium shadow-lg backdrop-blur-sm"
+            >
+              {error}
+            </motion.div>
+          )}
 
-        {results && !selectedResult && !loading && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            className="w-full max-w-2xl mt-12 space-y-4 relative z-10"
-          >
-            <h3 className="text-xl font-bold text-white mb-4">Search Results</h3>
-            {results.map((res: any, index: number) => (
-              <div 
-                key={res.id + index}
-                onClick={() => setSelectedResult(res)}
-                className="glass-panel p-4 rounded-2xl flex items-center gap-4 cursor-pointer hover:bg-white/10 transition-colors shadow-lg"
-              >
-                <div className="w-24 h-16 bg-black rounded-lg overflow-hidden flex-shrink-0 relative">
-                  {res.thumbnail ? (
-                    <img src={res.thumbnail} alt={res.title} className="w-full h-full object-cover" />
-                  ) : (
-                    <Music className="w-6 h-6 absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-gray-600" />
-                  )}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h4 className="text-white font-bold line-clamp-1">{res.title}</h4>
-                  <p className="text-sm text-gray-400 line-clamp-1">
-                    {res.artist} • {res.duration ? new Date(res.duration * 1000).toISOString().substr(14, 5) : "Unknown duration"}
-                  </p>
-                </div>
-                <button className="px-4 py-2 bg-white/10 rounded-xl text-white font-semibold hover:bg-white/20 transition-colors">
-                  Select
-                </button>
+          {results && !selectedResult && !loading && (
+            <motion.div
+              key="results"
+              variants={containerVariants}
+              initial="hidden"
+              animate="show"
+              exit={{ opacity: 0, y: -20, filter: "blur(10px)" }}
+              className="w-full space-y-4 relative z-10"
+            >
+              <div className="flex items-center gap-3 mb-6">
+                <div className="h-px bg-linear-to-r from-transparent to-white/20 flex-1" />
+                <h3 className="text-sm uppercase tracking-widest font-bold text-gray-400">Search Results</h3>
+                <div className="h-px bg-linear-to-l from-transparent to-white/20 flex-1" />
               </div>
-            ))}
-          </motion.div>
-        )}
-
-        {selectedResult && !loading && (
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.95, y: 20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            className="w-full max-w-2xl mt-12 glass-panel rounded-3xl overflow-hidden shadow-2xl relative z-10"
-          >
-            <div className="p-6">
-              <div className="flex items-center justify-between mb-6">
-                <h3 className="text-xl font-bold text-white">Media Details</h3>
-                <button 
-                  onClick={() => setSelectedResult(null)}
-                  className="bg-white/10 text-white px-4 py-2 rounded-xl text-sm font-semibold hover:bg-white/20 transition-colors"
-                >
-                  Back to results
-                </button>
+              
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {results.map((res: SearchResult, index: number) => (
+                  <motion.div 
+                    variants={itemVariants}
+                    key={res.id + index}
+                    whileHover={{ scale: 1.02, backgroundColor: "rgba(255,255,255,0.08)" }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => setSelectedResult(res)}
+                    className="group bg-white/5 border border-white/10 backdrop-blur-md p-3 rounded-3xl flex items-center gap-4 cursor-pointer transition-colors shadow-lg overflow-hidden relative"
+                  >
+                    <div className="w-20 h-20 bg-black/50 rounded-2xl overflow-hidden shrink-0 relative shadow-inner">
+                      {res.thumbnail ? (
+                        <Image src={res.thumbnail} alt={res.title} fill className="object-cover group-hover:scale-110 transition-transform duration-500" />
+                      ) : (
+                        <Music className="w-6 h-6 absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-gray-600" />
+                      )}
+                      <div className="absolute inset-0 bg-black/20 group-hover:bg-transparent transition-colors" />
+                    </div>
+                    <div className="flex-1 min-w-0 py-1 pr-2">
+                      <h4 className="text-white font-bold truncate text-base mb-1 group-hover:text-pink-300 transition-colors">{res.title}</h4>
+                      <div className="flex items-center gap-2 text-xs text-gray-400">
+                        <span className="truncate">{res.artist}</span>
+                        <span className="w-1 h-1 rounded-full bg-gray-600 shrink-0" />
+                        <span className="shrink-0">{res.duration ? new Date(res.duration * 1000).toISOString().substr(14, 5) : "--:--"}</span>
+                      </div>
+                    </div>
+                  </motion.div>
+                ))}
               </div>
+            </motion.div>
+          )}
 
-              <div className="flex flex-col sm:flex-row items-center gap-6 mb-8 bg-black/40 p-5 rounded-2xl border border-white/10 shadow-xl">
-                {/* Thumbnail */}
-                <div className="w-32 h-32 sm:w-40 sm:h-40 rounded-xl overflow-hidden bg-black flex-shrink-0 shadow-2xl border border-white/10 group relative">
-                  {selectedResult.thumbnail ? (
-                    <img src={selectedResult.thumbnail} alt={selectedResult.title} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" />
-                  ) : (
-                    <div className="w-full h-full bg-gray-800 flex items-center justify-center">
-                      <Music className="w-12 h-12 text-gray-600" />
+          {selectedResult && !loading && (
+            <motion.div 
+              key="selected"
+              initial={{ opacity: 0, scale: 0.9, y: 30 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 30 }}
+              transition={{ type: "spring", damping: 25, stiffness: 200 }}
+              className="w-full relative z-10"
+            >
+              {/* Immersive Player Card */}
+              <div className="relative rounded-[2.5rem] overflow-hidden shadow-[0_20px_50px_-12px_rgba(0,0,0,0.5)] border border-white/10 bg-black/40">
+                {/* Ambient blurred background */}
+                {selectedResult.thumbnail && (
+                  <div 
+                    className="absolute inset-0 z-0 opacity-30 mix-blend-screen pointer-events-none"
+                    style={{
+                      backgroundImage: `url(${selectedResult.thumbnail})`,
+                      backgroundSize: 'cover',
+                      backgroundPosition: 'center',
+                      filter: 'blur(60px)',
+                    }}
+                  />
+                )}
+                
+                <div className="relative z-10 p-6 sm:p-8 backdrop-blur-3xl bg-linear-to-b from-black/20 to-black/80">
+                  <div className="flex items-center justify-between mb-8">
+                    <div className="flex items-center gap-2 text-pink-400 font-semibold tracking-wider text-xs uppercase">
+                      <Sparkles className="w-4 h-4" /> Now Playing
                     </div>
-                  )}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end justify-center p-2">
-                    <Play className="w-8 h-8 text-white" />
-                  </div>
-                </div>
-
-                {/* Info & Audio Player */}
-                <div className="flex-1 w-full min-w-0 flex flex-col justify-center">
-                  <div className="mb-4">
-                    <h2 className="text-2xl sm:text-3xl font-bold text-white mb-1 line-clamp-1 group-hover:text-pink-400 transition-colors">
-                      {selectedResult.title}
-                    </h2>
-                    <div className="flex items-center gap-2 text-gray-400">
-                      <span className="font-medium text-pink-500/80">{selectedResult.artist}</span>
-                      <span>•</span>
-                      <span>{selectedResult.duration ? new Date(selectedResult.duration * 1000).toISOString().substr(14, 5) : "Unknown"}</span>
-                    </div>
-                  </div>
-                  
-                  <div className="bg-black/40 rounded-xl p-2 border border-white/10 backdrop-blur-sm">
-                    <audio 
-                      controls 
-                      preload="none"
-                      className="w-full outline-none h-10" 
-                      src={`/api/download?url=${encodeURIComponent(selectedResult.url)}&type=audio&filename=${encodeURIComponent(`${selectedResult.title} -by- ${selectedResult.artist} - SekMusic`)}`}
+                    <button 
+                      onClick={() => setSelectedResult(null)}
+                      className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-full text-sm font-semibold transition-colors flex items-center gap-2 backdrop-blur-md"
                     >
-                      Your browser does not support the audio element.
-                    </audio>
+                      Back
+                    </button>
+                  </div>
+
+                  <div className="flex flex-col md:flex-row gap-8 mb-8">
+                    {/* Thumbnail */}
+                    <div className="w-full md:w-56 h-56 rounded-3xl overflow-hidden bg-black/50 shrink-0 shadow-2xl border border-white/10 group relative flex items-center justify-center">
+                      {selectedResult.thumbnail ? (
+                        <Image src={selectedResult.thumbnail} alt={selectedResult.title} fill className="object-cover transition-transform duration-700 group-hover:scale-105" />
+                      ) : (
+                        <Music className="w-16 h-16 text-gray-700" />
+                      )}
+                      <div className="absolute inset-0 bg-linear-to-t from-black/80 via-black/20 to-transparent opacity-60" />
+                      <button className="absolute bottom-4 right-4 bg-white/20 hover:bg-white/30 backdrop-blur-md p-3 rounded-full transition-transform hover:scale-110 active:scale-95 text-white shadow-lg">
+                        <Play className="w-6 h-6 ml-1" />
+                      </button>
+                    </div>
+
+                    {/* Info & Audio Player */}
+                    <div className="flex-1 w-full min-w-0 flex flex-col justify-end py-2">
+                      <div className="mb-6">
+                        <h2 className="text-3xl sm:text-4xl font-extrabold text-white mb-2 leading-tight">
+                          {selectedResult.title}
+                        </h2>
+                        <div className="flex flex-wrap items-center gap-3 text-base font-medium">
+                          <span className="text-pink-400">{selectedResult.artist}</span>
+                          <span className="w-1.5 h-1.5 rounded-full bg-white/20" />
+                          <span className="text-gray-400">{selectedResult.duration ? new Date(selectedResult.duration * 1000).toISOString().substr(14, 5) : "--:--"}</span>
+                          <span className="w-1.5 h-1.5 rounded-full bg-white/20" />
+                          <span className="bg-white/10 text-white/80 px-2.5 py-0.5 rounded-md text-xs tracking-wider uppercase">HQ Audio</span>
+                        </div>
+                      </div>
+                      
+                      <div className="bg-white/5 rounded-2xl p-2 sm:p-3 border border-white/5 shadow-inner backdrop-blur-md relative overflow-hidden group">
+                        <div className="absolute inset-0 bg-linear-to-r from-pink-500/10 to-purple-500/10 opacity-0 group-hover:opacity-100 transition-opacity" />
+                        <audio 
+                          controls 
+                          controlsList="nodownload"
+                          preload="metadata"
+                          className="w-full outline-none h-12 [&::-webkit-media-controls-panel]:bg-transparent [&::-webkit-media-controls-current-time-display]:text-white [&::-webkit-media-controls-time-remaining-display]:text-white relative z-10 filter invert grayscale contrast-200 opacity-90" 
+                          src={`/api/download?url=${encodeURIComponent(selectedResult.url)}&type=audio&filename=${encodeURIComponent(`${selectedResult.title} -by- ${selectedResult.artist} - SekMusic`)}`}
+                        >
+                          Your browser does not support the audio element.
+                        </audio>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-6 pt-6 border-t border-white/10">
+                    {/* Video Player */}
+                    <div className="w-full bg-black/60 rounded-3xl p-3 border border-white/5 shadow-inner">
+                      <video 
+                        controls 
+                        controlsList="nodownload"
+                        preload="metadata"
+                        poster={selectedResult.thumbnail}
+                        className="w-full rounded-2xl aspect-video bg-black outline-none object-cover" 
+                        src={`/api/download?url=${encodeURIComponent(selectedResult.url)}&type=video&filename=${encodeURIComponent(`${selectedResult.title} -by- ${selectedResult.artist} - SekMusic`)}`}
+                      >
+                        Your browser does not support the video element.
+                      </video>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <motion.a 
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                        href={`/api/download?url=${encodeURIComponent(selectedResult.url)}&type=audio&dl=1&filename=${encodeURIComponent(`${selectedResult.title} -by- ${selectedResult.artist} - SekMusic`)}`}
+                        download={`${selectedResult.title} -by- ${selectedResult.artist} - SekMusic.m4a`}
+                        className="bg-white text-black py-4 rounded-2xl font-bold flex items-center justify-center gap-3 shadow-[0_0_20px_rgba(255,255,255,0.2)] hover:shadow-[0_0_30px_rgba(255,255,255,0.4)] transition-shadow"
+                      >
+                        <Download className="w-5 h-5" /> Download Audio
+                      </motion.a>
+                      <motion.a 
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                        href={`/api/download?url=${encodeURIComponent(selectedResult.url)}&type=video&dl=1&filename=${encodeURIComponent(`${selectedResult.title} -by- ${selectedResult.artist} - SekMusic`)}`}
+                        download={`${selectedResult.title} -by- ${selectedResult.artist} - SekMusic.mp4`}
+                        className="bg-white/5 border border-white/10 text-white hover:bg-white/10 py-4 rounded-2xl font-bold flex items-center justify-center gap-3 backdrop-blur-md transition-colors"
+                      >
+                        <Download className="w-5 h-5" /> Download Video
+                      </motion.a>
+                    </div>
                   </div>
                 </div>
               </div>
 
-              <div className="space-y-6">
-                {/* Video Player */}
-                <div className="w-full bg-black/40 rounded-2xl p-4 border border-white/10">
-                  <p className="text-sm text-gray-400 mb-2 font-medium px-1">Video Stream</p>
-                  <video 
-                    controls 
-                    preload="none"
-                    poster={selectedResult.thumbnail}
-                    className="w-full rounded-xl aspect-video bg-black outline-none" 
-                    src={`/api/download?url=${encodeURIComponent(selectedResult.url)}&type=video&filename=${encodeURIComponent(`${selectedResult.title} -by- ${selectedResult.artist} - SekMusic`)}`}
-                  >
-                    Your browser does not support the video element.
-                  </video>
-                </div>
-
-                <div className="flex flex-row gap-4">
-                  <a 
-                    href={`/api/download?url=${encodeURIComponent(selectedResult.url)}&type=audio&dl=1&filename=${encodeURIComponent(`${selectedResult.title} -by- ${selectedResult.artist} - SekMusic`)}`}
-                    download={`${selectedResult.title} -by- ${selectedResult.artist} - SekMusic.m4a`}
-                    className="flex-1 bg-white text-black py-4 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-gray-200 transition-all hover:scale-[1.01] active:scale-95 shadow-lg"
-                  >
-                    <Download className="w-5 h-5" /> Download Audio
-                  </a>
-                  <a 
-                    href={`/api/download?url=${encodeURIComponent(selectedResult.url)}&type=video&dl=1&filename=${encodeURIComponent(`${selectedResult.title} -by- ${selectedResult.artist} - SekMusic`)}`}
-                    download={`${selectedResult.title} -by- ${selectedResult.artist} - SekMusic.mp4`}
-                    className="flex-1 bg-pink-600/20 text-pink-500 border py-4 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-pink-600/30 transition-all hover:scale-[1.01] active:scale-95 shadow-lg"
-                  >
-                    <Download className="w-5 h-5" /> Download Video
-                  </a>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-4 border-t border-white/10">
-                <div className="col-span-2 sm:col-span-4 text-sm text-gray-400 font-medium mb-1">Open in External Apps</div>
-                <a href={selectedResult.url} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 bg-[#FF0000]/20 text-[#FF0000] hover:bg-[#FF0000]/30 py-3 rounded-xl transition-colors font-medium border border-[#FF0000]/20">
-                  YouTube <ExternalLink className="w-4 h-4" />
+              {/* External Links */}
+              <div className="mt-6 flex flex-wrap justify-center gap-3">
+                <a href={selectedResult.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 bg-[#FF0000]/10 hover:bg-[#FF0000]/20 text-[#FF0000] px-5 py-2.5 rounded-full transition-colors font-medium border border-[#FF0000]/20 text-sm">
+                  YouTube <ExternalLink className="w-3.5 h-3.5" />
                 </a>
-                <a href={`https://open.spotify.com/search/${getCleanSearchQuery(selectedResult.title, selectedResult.artist)}`} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 bg-[#1DB954]/20 text-[#1DB954] hover:bg-[#1DB954]/30 py-3 rounded-xl transition-colors font-medium border border-[#1DB954]/20">
-                  Spotify <ExternalLink className="w-4 h-4" />
+                <a href={`https://open.spotify.com/search/${getCleanSearchQuery(selectedResult.title, selectedResult.artist)}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 bg-[#1DB954]/10 hover:bg-[#1DB954]/20 text-[#1DB954] px-5 py-2.5 rounded-full transition-colors font-medium border border-[#1DB954]/20 text-sm">
+                  Spotify <ExternalLink className="w-3.5 h-3.5" />
                 </a>
-                <a href={`https://music.apple.com/search?term=${getCleanSearchQuery(selectedResult.title, selectedResult.artist)}`} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 bg-[#FA243C]/20 text-[#FA243C] hover:bg-[#FA243C]/30 py-3 rounded-xl transition-colors font-medium border border-[#FA243C]/20">
-                  Apple <ExternalLink className="w-4 h-4" />
+                <a href={`https://music.apple.com/search?term=${getCleanSearchQuery(selectedResult.title, selectedResult.artist)}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 bg-[#FA243C]/10 hover:bg-[#FA243C]/20 text-[#FA243C] px-5 py-2.5 rounded-full transition-colors font-medium border border-[#FA243C]/20 text-sm">
+                  Apple Music <ExternalLink className="w-3.5 h-3.5" />
                 </a>
               </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
     </div>
   );
 }
