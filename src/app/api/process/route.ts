@@ -1,19 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-// @ts-expect-error - yt-search does not provide TypeScript declaration files
-import ytSearch from "yt-search";
-import ytdl from "@distube/ytdl-core";
-
-interface VideoSearchResult {
-  videoId: string;
-  title: string;
-  author: {
-    name: string;
-  };
-  seconds: number;
-  thumbnail: string;
-  image?: string;
-  url: string;
-}
 
 export async function POST(req: NextRequest) {
   try {
@@ -27,40 +12,82 @@ export async function POST(req: NextRequest) {
     const isUrl = /^https?:\/\//i.test(searchString) || /^[a-zA-Z0-9-]+\.[a-zA-Z]{2,}(\/.*)?$/.test(searchString);
 
     if (isUrl) {
+      let videoId = "";
+      const ytMatch = searchString.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i);
+      if (ytMatch) {
+        videoId = ytMatch[1];
+      }
+
+      if (!videoId) {
+        return NextResponse.json({ error: "Could not extract video ID from URL." }, { status: 400 });
+      }
+
       try {
-        const info = await ytdl.getBasicInfo(searchString);
-        const videoDetails = info.videoDetails;
-        
+        const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
+        const res = await fetch(oembedUrl);
+        if (!res.ok) throw new Error("Failed to fetch oEmbed metadata.");
+        const data = await res.json();
+
         const output = [{
-          id: videoDetails.videoId,
-          title: videoDetails.title,
-          artist: videoDetails.author.name || "Unknown Artist",
-          duration: parseInt(videoDetails.lengthSeconds) || 0,
-          thumbnail: videoDetails.thumbnails?.[0]?.url || null,
-          url: videoDetails.video_url || searchString,
+          id: videoId,
+          title: data.title,
+          artist: data.author_name || "Unknown Artist",
+          duration: 0,
+          thumbnail: data.thumbnail_url || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+          url: `https://youtube.com/watch?v=${videoId}`,
           extractor: "youtube",
         }];
         return NextResponse.json(output);
-      } catch (ytdlError) {
-        console.error("Ytdl-core extraction error:", ytdlError);
-        return NextResponse.json({ error: "Failed to extract metadata from URL." }, { status: 400 });
+      } catch (err: unknown) {
+        console.error("oEmbed extraction error:", err);
+        return NextResponse.json({ error: "Failed to extract metadata from YouTube URL." }, { status: 400 });
       }
     } else {
-      const searchResult = await ytSearch(searchString);
-      const videos = searchResult.videos.slice(0, 5);
+      const ddgUrl = `https://html.duckduckgo.com/html/?q=site:youtube.com+${encodeURIComponent(searchString)}`;
+      const res = await fetch(ddgUrl, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+      });
 
-      if (videos.length === 0) {
+      if (!res.ok) {
+        throw new Error(`Failed to fetch search results from DuckDuckGo (Status ${res.status}).`);
+      }
+
+      const html = await res.text();
+      const matches = [...html.matchAll(/watch\?v=([a-zA-Z0-9_-]{11})/g)].map(m => m[1]);
+      const uniqueVideoIds = [...new Set(matches)].slice(0, 5);
+
+      if (uniqueVideoIds.length === 0) {
         return NextResponse.json({ error: "No results found" }, { status: 404 });
       }
 
-      const output = videos.map((video: VideoSearchResult) => ({
-        id: video.videoId,
-        title: video.title,
-        artist: video.author.name || "Unknown Artist",
-        duration: video.seconds,
-        thumbnail: video.thumbnail || video.image || null,
-        url: video.url,
-        extractor: "youtube",
+      const output = await Promise.all(uniqueVideoIds.map(async (videoId) => {
+        try {
+          const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
+          const oembedRes = await fetch(oembedUrl);
+          if (!oembedRes.ok) throw new Error();
+          const oembedData = await oembedRes.json();
+          return {
+            id: videoId,
+            title: oembedData.title,
+            artist: oembedData.author_name || "Unknown Artist",
+            duration: 0,
+            thumbnail: oembedData.thumbnail_url || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+            url: `https://youtube.com/watch?v=${videoId}`,
+            extractor: "youtube",
+          };
+        } catch {
+          return {
+            id: videoId,
+            title: "YouTube Video",
+            artist: "Unknown Artist",
+            duration: 0,
+            thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+            url: `https://youtube.com/watch?v=${videoId}`,
+            extractor: "youtube",
+          };
+        }
       }));
 
       return NextResponse.json(output);
