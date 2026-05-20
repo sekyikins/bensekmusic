@@ -1,6 +1,13 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  serverExternalPackages: [
+    "yt-search",
+    "@distube/ytdl-core",
+    "ffmpeg-static",
+    "fluent-ffmpeg",
+    "yt-dlp-exec"
+  ],
   images: {
     remotePatterns: [
       {
