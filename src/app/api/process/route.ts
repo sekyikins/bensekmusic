@@ -1,7 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-// @ts-expect-error - yt-search does not provide typescript types
-import yts from "yt-search";
-import "cheerio";
 
 const INVIDIOUS_INSTANCES = [
   "https://inv.thepixora.com",
@@ -9,6 +6,126 @@ const INVIDIOUS_INSTANCES = [
   "https://yewtu.be",
   "https://inv.nadeko.net"
 ];
+
+function findVideoRenderers(obj: any, results: any[] = []): any[] {
+  if (!obj || typeof obj !== "object") return results;
+  
+  if (obj.videoRenderer) {
+    results.push(obj.videoRenderer);
+  } else {
+    for (const key of Object.keys(obj)) {
+      findVideoRenderers(obj[key], results);
+    }
+  }
+  return results;
+}
+
+function parseVideoRenderer(renderer: any) {
+  try {
+    const videoId = renderer.videoId;
+    if (!videoId) return null;
+
+    let title = "";
+    if (renderer.title?.runs?.[0]?.text) {
+      title = renderer.title.runs[0].text;
+    } else if (renderer.title?.simpleText) {
+      title = renderer.title.simpleText;
+    }
+
+    let author = "Unknown Artist";
+    if (renderer.longBylineText?.runs?.[0]?.text) {
+      author = renderer.longBylineText.runs[0].text;
+    } else if (renderer.ownerText?.runs?.[0]?.text) {
+      author = renderer.ownerText.runs[0].text;
+    }
+
+    let lengthSeconds = 0;
+    const durationText = renderer.lengthText?.simpleText;
+    if (durationText) {
+      const parts = durationText.split(":").map(Number);
+      if (parts.length === 2) {
+        lengthSeconds = parts[0] * 60 + parts[1];
+      } else if (parts.length === 3) {
+        lengthSeconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
+      }
+    }
+
+    return {
+      videoId,
+      title,
+      author,
+      lengthSeconds,
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+function extractJSON(html: string): string {
+  let startIdx = html.indexOf('ytInitialData =');
+  if (startIdx === -1) {
+    startIdx = html.indexOf('ytInitialData');
+  }
+  
+  if (startIdx !== -1) {
+    const jsonStart = html.indexOf('{', startIdx);
+    if (jsonStart !== -1) {
+      let braceCount = 0;
+      let inString = false;
+      let escape = false;
+      for (let i = jsonStart; i < html.length; i++) {
+        const char = html[i];
+        if (escape) {
+          escape = false;
+          continue;
+        }
+        if (char === '\\') {
+          escape = true;
+          continue;
+        }
+        if (char === '"') {
+          inString = !inString;
+          continue;
+        }
+        if (!inString) {
+          if (char === '{') {
+            braceCount++;
+          } else if (char === '}') {
+            braceCount--;
+            if (braceCount === 0) {
+              return html.substring(jsonStart, i + 1);
+            }
+          }
+        }
+      }
+    }
+  }
+  throw new Error("Could not extract ytInitialData JSON");
+}
+
+async function searchYouTubeNative(query: string) {
+  const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&hl=en&gl=US`;
+  const response = await fetch(url, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "Accept": "text/html",
+      "Accept-Language": "en-US,en;q=0.9",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`YouTube returned status ${response.status}`);
+  }
+
+  const html = await response.text();
+  const jsonStr = extractJSON(html);
+  const data = JSON.parse(jsonStr);
+  const renderers = findVideoRenderers(data);
+  const videos = renderers
+    .map(parseVideoRenderer)
+    .filter((v): v is NonNullable<typeof v> => v !== null);
+  return videos;
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -55,22 +172,17 @@ export async function POST(req: NextRequest) {
     } else {
       try {
         const winner = await Promise.any([
-          // Try yt-search with a timeout race
+          // Try native YouTube search parser with a 4-second timeout race
           (async () => {
-            const ytsPromise = yts(searchString);
+            const ytsPromise = searchYouTubeNative(searchString);
             const timeoutPromise = new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error("yt-search timeout")), 4000)
+              setTimeout(() => reject(new Error("native search timeout")), 4000)
             );
             const r = await Promise.race([ytsPromise, timeoutPromise]);
-            if (r && r.videos && r.videos.length > 0) {
-              return r.videos.map((video: any) => ({
-                videoId: video.videoId,
-                title: video.title,
-                author: video.author?.name || "Unknown Artist",
-                lengthSeconds: video.seconds || 0,
-              }));
+            if (r && r.length > 0) {
+              return r;
             }
-            throw new Error("yt-search empty");
+            throw new Error("native search empty");
           })(),
           // Try Invidious instances
           ...INVIDIOUS_INSTANCES.map(async (baseUri) => {
