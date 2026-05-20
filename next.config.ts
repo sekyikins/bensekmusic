@@ -3,6 +3,13 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   serverExternalPackages: [
     "yt-search",
+    "cheerio",
+    "dasu",
+    "boolstring",
+    "human-time",
+    "jsonpath-plus",
+    "minimist",
+    "async.parallellimit",
     "@distube/ytdl-core",
     "ffmpeg-static",
     "fluent-ffmpeg",
