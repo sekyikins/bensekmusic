@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+// @ts-expect-error - yt-search does not provide typescript types
+import yts from "yt-search";
 
 const INVIDIOUS_INSTANCES = [
   "https://inv.thepixora.com",
@@ -51,18 +53,41 @@ export async function POST(req: NextRequest) {
       }
     } else {
       try {
-        const winner = await Promise.any(
-          INVIDIOUS_INSTANCES.map(async (baseUri) => {
+        const winner = await Promise.any([
+          // Try yt-search with a timeout race
+          (async () => {
+            const ytsPromise = yts(searchString);
+            const timeoutPromise = new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error("yt-search timeout")), 4000)
+            );
+            const r = await Promise.race([ytsPromise, timeoutPromise]);
+            if (r && r.videos && r.videos.length > 0) {
+              return r.videos.map((video: any) => ({
+                videoId: video.videoId,
+                title: video.title,
+                author: video.author?.name || "Unknown Artist",
+                lengthSeconds: video.seconds || 0,
+              }));
+            }
+            throw new Error("yt-search empty");
+          })(),
+          // Try Invidious instances
+          ...INVIDIOUS_INSTANCES.map(async (baseUri) => {
             const searchUrl = `${baseUri}/api/v1/search?q=${encodeURIComponent(searchString)}&type=video`;
             const response = await fetch(searchUrl, { signal: AbortSignal.timeout(4000) });
             if (!response.ok) throw new Error(`Status ${response.status}`);
             const data = await response.json();
             if (Array.isArray(data) && data.length > 0) {
-              return data;
+              return data.map((video: any) => ({
+                videoId: video.videoId,
+                title: video.title,
+                author: video.author || "Unknown Artist",
+                lengthSeconds: video.lengthSeconds || 0,
+              }));
             }
             throw new Error("Empty results");
           })
-        );
+        ]);
 
         const output = winner.slice(0, 5).map((video: any) => ({
           id: video.videoId,
@@ -76,7 +101,7 @@ export async function POST(req: NextRequest) {
 
         return NextResponse.json(output);
       } catch (poolError) {
-        console.error("Invidious search pool failed:", poolError);
+        console.error("Resilient search pool failed:", poolError);
         return NextResponse.json({ error: "Failed to fetch search results from resilient search pool. Please try again." }, { status: 500 });
       }
     }
