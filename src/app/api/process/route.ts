@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 // @ts-expect-error - yt-search does not provide typescript types
 import yts from "yt-search";
+import "cheerio";
 
 const INVIDIOUS_INSTANCES = [
   "https://inv.thepixora.com",
