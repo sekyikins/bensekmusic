@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import ytdl from "@distube/ytdl-core";
+import ytDlp from "yt-dlp-exec";
 
 export async function GET(req: NextRequest) {
   try {
@@ -13,22 +13,45 @@ export async function GET(req: NextRequest) {
       return new NextResponse("Missing video URL", { status: 400 });
     }
 
-    // 1. Get the streaming formats from ytdl
-    const info = await ytdl.getInfo(targetUrl);
+    // 1. Get the streaming formats from yt-dlp
+    const info: any = await ytDlp(targetUrl, {
+      dumpSingleJson: true,
+      noCheckCertificate: true,
+      noWarnings: true,
+    });
+
+    if (!info || !Array.isArray(info.formats)) {
+      throw new Error("Could not retrieve media format info.");
+    }
     
     let format;
     if (type === "video") {
-      // Find the highest resolution mp4 format that has both video and audio
-      format = ytdl.chooseFormat(info.formats, {
-        filter: "audioandvideo",
-        quality: "highestvideo",
-      });
+      // Find the highest resolution format that has both video and audio
+      const videoFormats = info.formats.filter((f: any) => f.vcodec !== 'none' && f.acodec !== 'none' && f.url);
+      if (videoFormats.length > 0) {
+        format = videoFormats.reduce((best: any, f: any) => {
+          if (!best) return f;
+          const bestHeight = best.height || 0;
+          const currentHeight = f.height || 0;
+          return currentHeight > bestHeight ? f : best;
+        }, null);
+      }
     } else {
       // Find highest quality audio only format
-      format = ytdl.chooseFormat(info.formats, {
-        filter: "audioonly",
-        quality: "highestaudio",
-      });
+      const audioFormats = info.formats.filter((f: any) => f.vcodec === 'none' && f.acodec !== 'none' && f.url);
+      if (audioFormats.length > 0) {
+        format = audioFormats.reduce((best: any, f: any) => {
+          if (!best) return f;
+          const bestBitrate = best.abr || 0;
+          const currentBitrate = f.abr || 0;
+          return currentBitrate > bestBitrate ? f : best;
+        }, null);
+      }
+    }
+
+    if (!format && info.formats.length > 0) {
+      // Fallback: just find any format that has a url
+      format = info.formats.find((f: any) => f.url);
     }
 
     const directUrl = format?.url;
@@ -48,6 +71,7 @@ export async function GET(req: NextRequest) {
 
     const response = await fetch(directUrl, {
       headers: proxyHeaders,
+      signal: req.signal,
     });
 
     if (!response.ok && response.status !== 206) {

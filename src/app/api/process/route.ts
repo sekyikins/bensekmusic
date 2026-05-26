@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import ytDlp from "yt-dlp-exec";
 
 const INVIDIOUS_INSTANCES = [
   "https://inv.thepixora.com",
@@ -9,7 +10,7 @@ const INVIDIOUS_INSTANCES = [
 
 function findVideoRenderers(obj: any, results: any[] = []): any[] {
   if (!obj || typeof obj !== "object") return results;
-  
+
   if (obj.videoRenderer) {
     results.push(obj.videoRenderer);
   } else {
@@ -66,7 +67,7 @@ function extractJSON(html: string): string {
   if (startIdx === -1) {
     startIdx = html.indexOf('ytInitialData');
   }
-  
+
   if (startIdx !== -1) {
     const jsonStart = html.indexOf('{', startIdx);
     if (jsonStart !== -1) {
@@ -172,6 +173,34 @@ export async function POST(req: NextRequest) {
     } else {
       try {
         const winner = await Promise.any([
+          // Try yt-dlp search with a 5-second timeout race
+          (async () => {
+            const ytdlpPromise = (async () => {
+              const results: any = await ytDlp(`ytsearch5:${searchString}`, {
+                dumpSingleJson: true,
+                noCheckCertificate: true,
+                noWarnings: true,
+                flatPlaylist: true,
+              });
+              if (results && Array.isArray(results.entries) && results.entries.length > 0) {
+                return results.entries.map((entry: any) => ({
+                  videoId: entry.id,
+                  title: entry.title,
+                  author: entry.uploader || "Unknown Artist",
+                  lengthSeconds: entry.duration || 0,
+                }));
+              }
+              throw new Error("yt-dlp search empty");
+            })();
+            const timeoutPromise = new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error("yt-dlp search timeout")), 5000)
+            );
+            const r = await Promise.race([ytdlpPromise, timeoutPromise]);
+            if (r && r.length > 0) {
+              return r;
+            }
+            throw new Error("yt-dlp search empty");
+          })(),
           // Try native YouTube search parser with a 4-second timeout race
           (async () => {
             const ytsPromise = searchYouTubeNative(searchString);

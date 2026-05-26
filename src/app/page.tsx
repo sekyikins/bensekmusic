@@ -301,7 +301,7 @@ export default function Home() {
                   >
                     <div className="w-20 h-20 bg-black/50 rounded-2xl overflow-hidden shrink-0 relative shadow-inner">
                       {res.thumbnail ? (
-                        <Image src={res.thumbnail} alt={res.title} fill className="object-cover group-hover:scale-110 transition-transform duration-500" />
+                        <Image src={res.thumbnail} alt={res.title} fill sizes="80px" className="object-cover group-hover:scale-110 transition-transform duration-500" />
                       ) : (
                         <Music className="w-6 h-6 absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-gray-600" />
                       )}
@@ -362,7 +362,7 @@ export default function Home() {
                     {/* Thumbnail */}
                     <div className="w-full md:w-56 h-56 rounded-3xl overflow-hidden bg-black/50 shrink-0 shadow-2xl border border-white/10 group relative flex items-center justify-center">
                       {selectedResult.thumbnail ? (
-                        <Image src={selectedResult.thumbnail} alt={selectedResult.title} fill className="object-cover transition-transform duration-700 group-hover:scale-105" />
+                        <Image src={selectedResult.thumbnail} alt={selectedResult.title} fill sizes="(max-width: 768px) 100vw, 224px" className="object-cover transition-transform duration-700 group-hover:scale-105" />
                       ) : (
                         <Music className="w-16 h-16 text-gray-700" />
                       )}
