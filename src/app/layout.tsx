@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Outfit } from "next/font/google";
 import "./globals.css";
+import Script from "next/script";
 
 const outfit = Outfit({ subsets: ["latin"] });
 
@@ -22,6 +23,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
+      <Script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8487986926421633" crossOrigin="anonymous" strategy="afterInteractive" />
       <body suppressHydrationWarning className={`${outfit.className} min-h-screen bg-background antialiased relative overflow-x-hidden`}>
         {/* Background ambient light */}
         <div className="fixed top-[-20%] left-[-10%] w-[50%] h-[50%] rounded-full bg-purple-600/20 blur-[120px] pointer-events-none -z-10 animate-pulse-glow" />
