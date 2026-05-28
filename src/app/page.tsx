@@ -34,7 +34,7 @@ export default function Home() {
       clean.replace(/\s*-\s*Topic/gi, '').replace(/\s*\|\s*SekMusic/gi, '').replace(/[-|]/g, ' ').replace(/\s+/g, ' ').trim()
     );
   };
-  
+
   const [error, setError] = useState<string | null>(null);
 
   const handleSearch = async (e: React.FormEvent) => {
@@ -94,7 +94,7 @@ export default function Home() {
       const recRes = await fetch("/api/recognize", { method: "POST", body: formData });
       if (!recRes.ok) throw new Error("Failed to recognize media format.");
       const recData = await recRes.json();
-      
+
       const identifiedQuery = recData.identifiedQuery;
       setQuery(identifiedQuery);
 
@@ -137,13 +137,13 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center pt-24 sm:pt-32 pb-20 p-4 selection:bg-pink-500/30 relative">
+    <div className="min-h-[calc(100vh-100px)] flex flex-col items-center pt-24 pb-20 p-4 selection:bg-pink-500/30 relative">
       {/* Dynamic Background Elements */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden -z-20">
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[80vw] h-[50vh] bg-linear-to-b from-purple-900/20 to-transparent blur-3xl opacity-50" />
       </div>
 
-      <motion.div 
+      <motion.div
         variants={containerVariants}
         initial="hidden"
         animate="show"
@@ -152,14 +152,14 @@ export default function Home() {
         {/* Hero Section */}
         {(selectedResult || results) && (
           <div className="flex gap-2 items-center justify-center p-4">
-          <motion.div 
-            className="inline-flex items-center justify-center p-4 rounded-3xl bg-white/5 border border-white/10 shadow-[0_0_40px_-10px_rgba(236,72,153,0.3)] backdrop-blur-xl"
-            whileHover={{ scale: 1.05, rotate: 5 }}
-            transition={{ type: "spring", stiffness: 400, damping: 10 }}
-          >
-            <AudioLines className="w-10 h-10 text-pink-400" />
-          </motion.div>
-          <h1 className="text-5xl sm:text-7xl font-extrabold tracking-tighter">
+            <motion.div
+              className="inline-flex items-center justify-center p-4 rounded-3xl bg-white/5 border border-white/10 shadow-[0_0_40px_-10px_rgba(236,72,153,0.3)] backdrop-blur-xl"
+              whileHover={{ scale: 1.05, rotate: 5 }}
+              transition={{ type: "spring", stiffness: 400, damping: 10 }}
+            >
+              <AudioLines className="w-10 h-10 text-pink-400" />
+            </motion.div>
+            <h1 className="text-5xl sm:text-7xl font-extrabold tracking-tighter">
               <span className="bg-clip-text text-transparent bg-linear-to-br from-white via-white to-gray-500 drop-shadow-sm">Sek</span>
               <span className="bg-clip-text text-transparent bg-linear-to-r from-purple-400 via-pink-500 to-rose-500 drop-shadow-[0_0_30px_rgba(236,72,153,0.4)]">Music</span>
             </h1>
@@ -167,7 +167,7 @@ export default function Home() {
         )}
         {!selectedResult && !results && (
           <motion.div variants={itemVariants} className="text-center space-y-6 mb-12 w-full">
-            <motion.div 
+            <motion.div
               className="inline-flex items-center justify-center p-4 rounded-3xl bg-white/5 border border-white/10 shadow-[0_0_40px_-10px_rgba(236,72,153,0.3)] backdrop-blur-xl mb-4"
               whileHover={{ scale: 1.05, rotate: 5 }}
               transition={{ type: "spring", stiffness: 400, damping: 10 }}
@@ -187,7 +187,7 @@ export default function Home() {
         {/* Input Section */}
         <motion.div variants={itemVariants} className={`w-full transition-all duration-700 ${selectedResult || results ? 'mb-10 scale-95 opacity-80 hover:opacity-100 hover:scale-100' : ''}`}>
           <form onSubmit={handleSearch} className="flex flex-col gap-5 w-full relative">
-            <div 
+            <div
               className={`relative flex items-center w-full rounded-3xl transition-all duration-500
                 ${isFocused ? 'bg-black/60 shadow-[0_0_0_1px_rgba(236,72,153,0.5),0_10px_40px_-10px_rgba(236,72,153,0.2)]' : 'bg-black/40 shadow-xl border border-white/10'}
                 backdrop-blur-2xl p-2 sm:p-3 z-20 overflow-hidden
@@ -197,11 +197,11 @@ export default function Home() {
               {isFocused && (
                 <div className="absolute inset-0 bg-linear-to-r from-purple-500/10 via-pink-500/10 to-rose-500/10 blur-xl z-0" />
               )}
-              
+
               <div className="pl-4 pr-3 text-gray-400 relative z-10 transition-colors duration-300">
                 {loading ? <Loader2 className="w-6 h-6 animate-spin text-pink-400" /> : <Search className={`w-6 h-6 ${isFocused ? 'text-pink-400' : ''}`} />}
               </div>
-              
+
               <input
                 type="text"
                 value={query}
@@ -212,34 +212,34 @@ export default function Home() {
                 className="flex-1 bg-transparent border-none outline-none py-3 text-lg text-white placeholder-gray-500 focus:ring-0 min-w-0 relative z-10 font-medium"
                 disabled={loading}
               />
-              
+
               <div className="hidden sm:flex items-center gap-2 pr-2 relative z-10">
-                <motion.button 
+                <motion.button
                   whileHover={{ scale: 1.05, backgroundColor: "rgba(255,255,255,0.15)" }}
                   whileTap={{ scale: 0.95 }}
-                  type="button" 
+                  type="button"
                   className="flex items-center justify-center p-3 bg-white/5 cursor-pointer rounded-2xl transition-colors text-gray-300"
                   title="Paste Link"
                 >
-                  <LinkIcon className="w-5 h-5" /> 
+                  <LinkIcon className="w-5 h-5" />
                 </motion.button>
                 <input type="file" accept="audio/*,video/*" ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
-                <motion.button 
+                <motion.button
                   whileHover={{ scale: 1.05, backgroundColor: "rgba(255,255,255,0.15)" }}
                   whileTap={{ scale: 0.95 }}
-                  type="button" 
+                  type="button"
                   onClick={() => fileInputRef.current?.click()}
                   className="flex items-center justify-center p-3 bg-white/5 cursor-pointer rounded-2xl transition-colors text-gray-300"
                   title="Upload Audio"
                 >
-                  <Upload className="w-5 h-5" /> 
+                  <Upload className="w-5 h-5" />
                 </motion.button>
               </div>
 
-              <motion.button 
+              <motion.button
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.95 }}
-                type="submit" 
+                type="submit"
                 disabled={loading || !query.trim()}
                 className="bg-white text-black px-6 sm:px-8 py-3 sm:py-4 ml-2 cursor-pointer rounded-2xl font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center relative z-10 hover:shadow-[0_0_20px_rgba(255,255,255,0.4)]"
               >
@@ -247,7 +247,7 @@ export default function Home() {
                 <span className="sm:hidden"><Sparkles className="w-5 h-5" /></span>
               </motion.button>
             </div>
-            
+
             {/* Mobile Actions */}
             <div className="flex sm:hidden items-center justify-center gap-3 w-full">
               <button type="button" className="flex-1 flex justify-center items-center gap-2 py-3 bg-white/5 rounded-2xl text-gray-300 border border-white/5 backdrop-blur-md font-medium text-sm">
@@ -288,10 +288,10 @@ export default function Home() {
                 <h3 className="text-sm uppercase tracking-widest font-bold text-gray-400">Search Results</h3>
                 <div className="h-px bg-linear-to-l from-transparent to-white/20 flex-1" />
               </div>
-              
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {results.map((res: SearchResult, index: number) => (
-                  <motion.div 
+                  <motion.div
                     variants={itemVariants}
                     key={res.id + index}
                     whileHover={{ scale: 1.02, backgroundColor: "rgba(255,255,255,0.08)" }}
@@ -322,7 +322,7 @@ export default function Home() {
           )}
 
           {selectedResult && !loading && (
-            <motion.div 
+            <motion.div
               key="selected"
               initial={{ opacity: 0, scale: 0.9, y: 30 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -334,7 +334,7 @@ export default function Home() {
               <div className="relative rounded-[2.5rem] overflow-hidden shadow-[0_20px_50px_-12px_rgba(0,0,0,0.5)] border border-white/10 bg-black/40">
                 {/* Ambient blurred background */}
                 {selectedResult.thumbnail && (
-                  <div 
+                  <div
                     className="absolute inset-0 z-0 opacity-30 mix-blend-screen pointer-events-none"
                     style={{
                       backgroundImage: `url(${selectedResult.thumbnail})`,
@@ -344,13 +344,13 @@ export default function Home() {
                     }}
                   />
                 )}
-                
+
                 <div className="relative z-10 p-6 sm:p-8 backdrop-blur-3xl bg-linear-to-b from-black/20 to-black/80">
                   <div className="flex items-center justify-between mb-8">
                     <div className="flex items-center gap-2 text-pink-400 font-semibold tracking-wider text-xs uppercase">
                       <Sparkles className="w-4 h-4" /> Now Playing
                     </div>
-                    <button 
+                    <button
                       onClick={() => setSelectedResult(null)}
                       className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-full text-sm font-semibold transition-colors flex items-center gap-2 backdrop-blur-md"
                     >
@@ -386,14 +386,14 @@ export default function Home() {
                           <span className="bg-white/10 text-white/80 px-2.5 py-0.5 rounded-md text-xs tracking-wider uppercase">HQ Audio</span>
                         </div>
                       </div>
-                      
+
                       <div className="bg-white/5 rounded-2xl p-2 sm:p-3 border border-white/5 shadow-inner backdrop-blur-md relative overflow-hidden group">
                         <div className="absolute inset-0 bg-linear-to-r from-pink-500/10 to-purple-500/10 opacity-0 group-hover:opacity-100 transition-opacity" />
-                        <audio 
-                          controls 
+                        <audio
+                          controls
                           controlsList="nodownload"
                           preload="metadata"
-                          className="w-full outline-none h-12 [&::-webkit-media-controls-panel]:bg-transparent [&::-webkit-media-controls-current-time-display]:text-white [&::-webkit-media-controls-time-remaining-display]:text-white relative z-10 filter invert grayscale contrast-200 opacity-90" 
+                          className="w-full outline-none h-12 [&::-webkit-media-controls-panel]:bg-transparent [&::-webkit-media-controls-current-time-display]:text-white [&::-webkit-media-controls-time-remaining-display]:text-white relative z-10 filter invert grayscale contrast-200 opacity-90"
                           src={`/api/download?url=${encodeURIComponent(selectedResult.url)}&type=audio&filename=${encodeURIComponent(`${selectedResult.title} -by- ${selectedResult.artist} - SekMusic`)}`}
                         >
                           Your browser does not support the audio element.
@@ -405,12 +405,12 @@ export default function Home() {
                   <div className="space-y-6 pt-6 border-t border-white/10">
                     {/* Video Player */}
                     <div className="w-full bg-black/60 rounded-3xl p-3 border border-white/5 shadow-inner">
-                      <video 
-                        controls 
+                      <video
+                        controls
                         controlsList="nodownload"
                         preload="metadata"
                         poster={selectedResult.thumbnail}
-                        className="w-full rounded-2xl aspect-video bg-black outline-none object-cover" 
+                        className="w-full rounded-2xl aspect-video bg-black outline-none object-cover"
                         src={`/api/download?url=${encodeURIComponent(selectedResult.url)}&type=video&filename=${encodeURIComponent(`${selectedResult.title} -by- ${selectedResult.artist} - SekMusic`)}`}
                       >
                         Your browser does not support the video element.
@@ -418,7 +418,7 @@ export default function Home() {
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <motion.a 
+                      <motion.a
                         whileHover={{ scale: 1.02 }}
                         whileTap={{ scale: 0.98 }}
                         href={`/api/download?url=${encodeURIComponent(selectedResult.url)}&type=audio&dl=1&filename=${encodeURIComponent(`${selectedResult.title} -by- ${selectedResult.artist} - SekMusic`)}`}
@@ -427,7 +427,7 @@ export default function Home() {
                       >
                         <Download className="w-5 h-5" /> Download Audio
                       </motion.a>
-                      <motion.a 
+                      <motion.a
                         whileHover={{ scale: 1.02 }}
                         whileTap={{ scale: 0.98 }}
                         href={`/api/download?url=${encodeURIComponent(selectedResult.url)}&type=video&dl=1&filename=${encodeURIComponent(`${selectedResult.title} -by- ${selectedResult.artist} - SekMusic`)}`}
