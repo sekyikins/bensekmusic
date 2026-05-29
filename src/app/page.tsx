@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import Image from "next/image";
 import { motion, AnimatePresence, Variants } from "framer-motion";
-import { Search, Link as LinkIcon, Upload, Music, Loader2, Play, Download, ExternalLink, Sparkles, AudioLines } from "lucide-react";
+import { Search, Link as LinkIcon, Upload, Music, Loader2, Play, Pause, Download, ExternalLink, Sparkles, AudioLines, History } from "lucide-react";
 
 interface SearchResult {
   id: string;
@@ -17,11 +17,266 @@ interface SearchResult {
 
 export default function Home() {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const sourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const animationRef = useRef<number | null>(null);
+
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<SearchResult[] | null>(null);
   const [selectedResult, setSelectedResult] = useState<SearchResult | null>(null);
   const [isFocused, setIsFocused] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+
+  // Volume and player settings states
+  const [volume, setVolume] = useState<number>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("sekmusic_volume");
+      return saved ? parseFloat(saved) : 1.0;
+    }
+    return 1.0;
+  });
+  const [muted, setMuted] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("sekmusic_muted") === "true";
+    }
+    return false;
+  });
+
+  // History and lyrics states
+  const [history, setHistory] = useState<SearchResult[]>([]);
+  const [lyrics, setLyrics] = useState<string | null>(null);
+  const [syncedLyrics, setSyncedLyrics] = useState<string | null>(null);
+  const [lyricsLoading, setLyricsLoading] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const activeLineRef = useRef<HTMLDivElement>(null);
+  const [activeTab, setActiveTab] = useState<"player" | "lyrics">(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("sekmusic_active_tab");
+      return (saved === "player" || saved === "lyrics") ? saved : "player";
+    }
+    return "player";
+  });
+
+  // Load history on mount
+  useEffect(() => {
+    const saved = localStorage.getItem("sekmusic_history");
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        setTimeout(() => {
+          setHistory(parsed);
+        }, 0);
+      } catch (e) {
+        console.error("Failed to parse history:", e);
+      }
+    }
+  }, []);
+
+  // Clean up visualizer animation on unmount or track change
+  useEffect(() => {
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+    };
+  }, [selectedResult]);
+
+  // Sync volume and muted state to media elements
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.volume = volume;
+      audioRef.current.muted = muted;
+    }
+    if (videoRef.current) {
+      videoRef.current.volume = volume;
+      videoRef.current.muted = muted;
+    }
+  }, [selectedResult, volume, muted]);
+
+  // Sync activeTab to localStorage
+  useEffect(() => {
+    localStorage.setItem("sekmusic_active_tab", activeTab);
+  }, [activeTab]);
+
+  const fetchLyrics = async (title: string, artist: string, duration?: number) => {
+    setLyricsLoading(true);
+    setLyrics(null);
+    setSyncedLyrics(null);
+    try {
+      const params = new URLSearchParams({ title, artist });
+      if (duration) params.set("duration", String(Math.round(duration)));
+      const res = await fetch(`/api/lyrics?${params.toString()}`);
+      if (res.ok) {
+        const data = await res.json();
+        setLyrics(data.lyrics || "No lyrics found.");
+        setSyncedLyrics(data.syncedLyrics || null);
+      } else {
+        setLyrics("Could not retrieve lyrics for this track.");
+      }
+    } catch (err) {
+      console.error("Failed to fetch lyrics:", err);
+      setLyrics("Error retrieving lyrics.");
+    } finally {
+      setLyricsLoading(false);
+    }
+  };
+
+  const selectSong = (song: SearchResult | null) => {
+    setSelectedResult(song);
+    if (song) {
+      setHistory((prev) => {
+        const filtered = prev.filter((item) => item.id !== song.id);
+        const updated = [song, ...filtered].slice(0, 8);
+        localStorage.setItem("sekmusic_history", JSON.stringify(updated));
+        return updated;
+      });
+
+      // Reset lyrics setup
+      setLyrics(null);
+      setSyncedLyrics(null);
+      setCurrentTime(0);
+
+      // Fetch lyrics automatically
+      fetchLyrics(song.title, song.artist, song.duration);
+    }
+  };
+
+  // Parse synced lyrics into a structured array
+  const parsedLyrics = (() => {
+    if (!syncedLyrics) return null;
+    const lines = syncedLyrics.split("\n");
+    const result: { time: number; text: string }[] = [];
+    const timeReg = /^\[(\d+):(\d+)(?:\.(\d+))?\](.*)/;
+    
+    for (const line of lines) {
+      const match = timeReg.exec(line.trim());
+      if (match) {
+        const minutes = parseInt(match[1], 10);
+        const seconds = parseInt(match[2], 10);
+        const milliseconds = match[3] ? parseInt(match[3].padEnd(3, "0").substring(0, 3), 10) : 0;
+        const time = minutes * 60 + seconds + milliseconds / 1000;
+        const text = match[4].trim();
+        // Skip metadata lines or empty lines
+        if (text) {
+          result.push({ time, text });
+        }
+      }
+    }
+    return result.sort((a, b) => a.time - b.time);
+  })();
+
+  // Find active line index
+  const activeLineIndex = (() => {
+    if (!parsedLyrics) return -1;
+    let index = -1;
+    for (let i = 0; i < parsedLyrics.length; i++) {
+      if (currentTime >= parsedLyrics[i].time) {
+        index = i;
+      } else {
+        break;
+      }
+    }
+    return index;
+  })();
+
+  // Smooth scroll active line to center
+  useEffect(() => {
+    if (activeLineRef.current) {
+      activeLineRef.current.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    }
+  }, [activeLineIndex]);
+
+  const initVisualizer = () => {
+    if (!audioRef.current || !canvasRef.current) return;
+    if (audioContextRef.current) return;
+
+    try {
+      const AudioContextClass = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      const audioCtx = new AudioContextClass();
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 64;
+      const source = audioCtx.createMediaElementSource(audioRef.current);
+      source.connect(analyser);
+      analyser.connect(audioCtx.destination);
+
+      audioContextRef.current = audioCtx;
+      analyserRef.current = analyser;
+      sourceRef.current = source;
+
+      draw(analyser, canvasRef.current);
+    } catch (err) {
+      console.error("Failed to initialize visualizer:", err);
+    }
+  };
+
+  const draw = (analyser: AnalyserNode, canvas: HTMLCanvasElement) => {
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+
+    const renderFrame = () => {
+      animationRef.current = requestAnimationFrame(renderFrame);
+      analyser.getByteFrequencyData(dataArray);
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const width = canvas.width;
+      const height = canvas.height;
+      const barWidth = (width / bufferLength) * 1.5;
+      let barHeight;
+      let x = 0;
+
+      for (let i = 0; i < bufferLength; i++) {
+        barHeight = (dataArray[i] / 255) * height * 0.8;
+        const gradient = ctx.createLinearGradient(0, height, 0, height - barHeight);
+        gradient.addColorStop(0, "#a855f7"); // purple
+        gradient.addColorStop(1, "#ec4899"); // pink
+
+        ctx.fillStyle = gradient;
+        ctx.fillRect(x, height - barHeight, barWidth - 2, barHeight);
+        x += barWidth;
+      }
+    };
+
+    renderFrame();
+  };
+
+  const handlePasteLink = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) {
+        setQuery(text);
+      }
+    } catch (err) {
+      console.error("Failed to read clipboard:", err);
+    }
+  };
+
+  const togglePlay = async () => {
+    if (!audioRef.current) return;
+
+    if (!audioContextRef.current) {
+      initVisualizer();
+    } else if (audioContextRef.current.state === "suspended") {
+      await audioContextRef.current.resume();
+    }
+
+    if (isPlaying) {
+      audioRef.current.pause();
+    } else {
+      audioRef.current.play().catch((err) => console.error("Playback error:", err));
+    }
+  };
 
   const getCleanSearchQuery = (title: string, artist: string) => {
     const cleanArtist = artist.replace(/\s*(music|vevo|official|channel|records|productions)$/gi, '').trim();
@@ -44,7 +299,7 @@ export default function Home() {
     setLoading(true);
     setError(null);
     setResults(null);
-    setSelectedResult(null);
+    selectSong(null);
 
     try {
       const res = await fetch("/api/process", {
@@ -66,9 +321,9 @@ export default function Home() {
 
       if (Array.isArray(data)) {
         setResults(data);
-        if (data.length === 1) setSelectedResult(data[0]);
+        if (data.length === 1) selectSong(data[0]);
       } else {
-        setSelectedResult(data);
+        selectSong(data);
       }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "An unexpected error occurred.");
@@ -84,7 +339,7 @@ export default function Home() {
     setLoading(true);
     setError(null);
     setResults(null);
-    setSelectedResult(null);
+    selectSong(null);
     setQuery(`Analyzing ${file.name}...`);
 
     try {
@@ -110,9 +365,9 @@ export default function Home() {
 
       if (Array.isArray(data)) {
         setResults(data);
-        if (data.length === 1) setSelectedResult(data[0]);
+        if (data.length === 1) selectSong(data[0]);
       } else {
-        setSelectedResult(data);
+        selectSong(data);
       }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "An unexpected error occurred.");
@@ -218,6 +473,7 @@ export default function Home() {
                   whileHover={{ scale: 1.05, backgroundColor: "rgba(255,255,255,0.15)" }}
                   whileTap={{ scale: 0.95 }}
                   type="button"
+                  onClick={handlePasteLink}
                   className="flex items-center justify-center p-3 bg-white/5 cursor-pointer rounded-2xl transition-colors text-gray-300"
                   title="Paste Link"
                 >
@@ -250,7 +506,7 @@ export default function Home() {
 
             {/* Mobile Actions */}
             <div className="flex sm:hidden items-center justify-center gap-3 w-full">
-              <button type="button" className="flex-1 flex justify-center items-center gap-2 py-3 bg-white/5 rounded-2xl text-gray-300 border border-white/5 backdrop-blur-md font-medium text-sm">
+              <button type="button" onClick={handlePasteLink} className="flex-1 flex justify-center items-center gap-2 py-3 bg-white/5 rounded-2xl text-gray-300 border border-white/5 backdrop-blur-md font-medium text-sm">
                 <LinkIcon className="w-4 h-4" /> Paste Link
               </button>
               <button type="button" onClick={() => fileInputRef.current?.click()} className="flex-1 flex justify-center items-center gap-2 py-3 bg-white/5 rounded-2xl text-gray-300 border border-white/5 backdrop-blur-md font-medium text-sm">
@@ -259,6 +515,58 @@ export default function Home() {
             </div>
           </form>
         </motion.div>
+
+        {/* Recent History Section */}
+        {!selectedResult && !results && history.length > 0 && (
+          <motion.div
+            variants={itemVariants}
+            className="w-full mt-10 space-y-4 animate-fadeIn"
+          >
+            <div className="flex items-center gap-3">
+              <History className="w-4 h-4 text-pink-400" />
+              <h3 className="text-sm uppercase tracking-widest font-bold text-gray-400">Recently Processed</h3>
+              <div className="h-px bg-linear-to-r from-transparent to-white/10 flex-1" />
+              <button 
+                type="button"
+                onClick={() => {
+                  localStorage.removeItem("sekmusic_history");
+                  setHistory([]);
+                }}
+                className="text-xs text-gray-500 hover:text-pink-400 transition-colors cursor-pointer"
+              >
+                Clear
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {history.map((track, idx) => (
+                <motion.div
+                  whileHover={{ scale: 1.02, backgroundColor: "rgba(255,255,255,0.08)" }}
+                  whileTap={{ scale: 0.98 }}
+                  key={track.id + "-hist-" + idx}
+                  onClick={() => selectSong(track)}
+                  className="group bg-white/5 border border-white/10 backdrop-blur-md p-3 rounded-3xl flex items-center gap-4 cursor-pointer transition-colors shadow-lg overflow-hidden"
+                >
+                  <div className="w-16 h-16 bg-black/50 rounded-2xl overflow-hidden shrink-0 relative">
+                    {track.thumbnail ? (
+                      <Image src={track.thumbnail} alt={track.title} fill sizes="64px" className="object-cover group-hover:scale-110 transition-transform duration-500" />
+                    ) : (
+                      <Music className="w-5 h-5 absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-gray-600" />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0 pr-2">
+                    <h4 className="text-white font-bold truncate text-sm mb-1 group-hover:text-pink-300 transition-colors">{track.title}</h4>
+                    <div className="flex items-center gap-2 text-xs text-gray-400">
+                      <span className="truncate">{track.artist}</span>
+                      <span className="w-1 h-1 rounded-full bg-gray-600 shrink-0" />
+                      <span>{track.duration ? new Date(track.duration * 1000).toISOString().substr(14, 5) : "--:--"}</span>
+                    </div>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+          </motion.div>
+        )}
 
         {/* Results Section */}
         <AnimatePresence mode="wait">
@@ -296,7 +604,7 @@ export default function Home() {
                     key={res.id + index}
                     whileHover={{ scale: 1.02, backgroundColor: "rgba(255,255,255,0.08)" }}
                     whileTap={{ scale: 0.98 }}
-                    onClick={() => setSelectedResult(res)}
+                    onClick={() => selectSong(res)}
                     className="group bg-white/5 border border-white/10 backdrop-blur-md p-3 rounded-3xl flex items-center gap-4 cursor-pointer transition-colors shadow-lg overflow-hidden relative"
                   >
                     <div className="w-20 h-20 bg-black/50 rounded-2xl overflow-hidden shrink-0 relative shadow-inner">
@@ -346,29 +654,47 @@ export default function Home() {
                 )}
 
                 <div className="relative z-10 p-6 sm:p-8 backdrop-blur-3xl bg-linear-to-b from-black/20 to-black/80">
-                  <div className="flex items-center justify-between mb-8">
-                    <div className="flex items-center gap-2 text-pink-400 font-semibold tracking-wider text-xs uppercase">
-                      <Sparkles className="w-4 h-4" /> Now Playing
-                    </div>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+                    {/* Back button */}
                     <button
-                      onClick={() => setSelectedResult(null)}
-                      className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-full text-sm font-semibold transition-colors flex items-center gap-2 backdrop-blur-md"
+                      type="button"
+                      onClick={() => selectSong(null)}
+                      className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-full text-sm font-semibold transition-colors flex items-center gap-2 backdrop-blur-md self-end sm:self-auto cursor-pointer"
                     >
                       Back
                     </button>
                   </div>
 
+                  {/* Always-visible player section */}
                   <div className="flex flex-col md:flex-row gap-8 mb-8">
-                    {/* Thumbnail */}
-                    <div className="w-full md:w-56 h-56 rounded-3xl overflow-hidden bg-black/50 shrink-0 shadow-2xl border border-white/10 group relative flex items-center justify-center">
-                      {selectedResult.thumbnail ? (
-                        <Image src={selectedResult.thumbnail} alt={selectedResult.title} fill sizes="(max-width: 768px) 100vw, 224px" className="object-cover transition-transform duration-700 group-hover:scale-105" />
-                      ) : (
-                        <Music className="w-16 h-16 text-gray-700" />
-                      )}
-                      <div className="absolute inset-0 bg-linear-to-t from-black/80 via-black/20 to-transparent opacity-60" />
-                      <button className="absolute bottom-4 right-4 bg-white/20 hover:bg-white/30 backdrop-blur-md p-3 rounded-full transition-transform hover:scale-110 active:scale-95 text-white shadow-lg">
-                        <Play className="w-6 h-6 ml-1" />
+                    {/* Thumbnail & Show Lyrics Button */}
+                    <div className="flex flex-col gap-4">
+                      <div className="w-full md:w-56 h-56 rounded-3xl overflow-hidden bg-black/50 shrink-0 shadow-2xl border border-white/10 group relative flex items-center justify-center">
+                        {selectedResult.thumbnail ? (
+                          <Image src={selectedResult.thumbnail} alt={selectedResult.title} fill sizes="(max-width: 768px) 100vw, 224px" className="object-cover transition-transform duration-700 group-hover:scale-105" />
+                        ) : (
+                          <Music className="w-16 h-16 text-gray-700" />
+                        )}
+                        <div className="absolute inset-0 bg-linear-to-t from-black/80 via-black/20 to-transparent opacity-60" />
+                        <button 
+                          type="button"
+                          onClick={togglePlay}
+                          className="absolute bottom-4 right-4 bg-white/20 hover:bg-white/30 backdrop-blur-md p-3 rounded-full transition-transform hover:scale-110 active:scale-95 text-white shadow-lg z-20 cursor-pointer"
+                        >
+                          {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6" />}
+                        </button>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab(activeTab === "lyrics" ? "player" : "lyrics")}
+                        className={`w-fit px-5 py-2 rounded-full text-sm font-bold transition-all flex items-center gap-2 cursor-pointer border backdrop-blur-md ${
+                          activeTab === "lyrics"
+                            ? "bg-white text-black shadow-md border-white/20"
+                            : "bg-white/5 border-white/10 text-gray-400 hover:text-white hover:bg-white/10"
+                        }`}
+                      >
+                        {activeTab === "lyrics" ? "Hide Lyrics" : "Show Lyrics"}
+                        {lyricsLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                       </button>
                     </div>
 
@@ -390,6 +716,19 @@ export default function Home() {
                       <div className="bg-white/5 rounded-2xl p-2 sm:p-3 border border-white/5 shadow-inner backdrop-blur-md relative overflow-hidden group">
                         <div className="absolute inset-0 bg-linear-to-r from-pink-500/10 to-purple-500/10 opacity-0 group-hover:opacity-100 transition-opacity" />
                         <audio
+                          ref={audioRef}
+                          onPlay={() => setIsPlaying(true)}
+                          onPause={() => setIsPlaying(false)}
+                          onEnded={() => setIsPlaying(false)}
+                          onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
+                          onVolumeChange={(e) => {
+                            const targetVolume = e.currentTarget.volume;
+                            const targetMuted = e.currentTarget.muted;
+                            setVolume(targetVolume);
+                            setMuted(targetMuted);
+                            localStorage.setItem("sekmusic_volume", String(targetVolume));
+                            localStorage.setItem("sekmusic_muted", String(targetMuted));
+                          }}
                           controls
                           controlsList="nodownload"
                           preload="metadata"
@@ -399,13 +738,85 @@ export default function Home() {
                           Your browser does not support the audio element.
                         </audio>
                       </div>
+
+                      {/* Visualizer Canvas */}
+                      <canvas 
+                        ref={canvasRef} 
+                        className="w-full h-10 rounded-xl bg-black/40 border border-white/5 mt-4" 
+                      />
                     </div>
                   </div>
 
+                  {/* Lyrics Panel — slides open below player */}
+                  <AnimatePresence>
+                    {activeTab === "lyrics" && (
+                      <motion.div
+                        key="lyrics-panel"
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        transition={{ duration: 0.3, ease: "easeInOut" }}
+                        className="overflow-hidden mb-8"
+                      >
+                        <div className="bg-black/40 border border-white/5 rounded-3xl p-6 sm:p-8 backdrop-blur-md relative overflow-y-auto max-h-[400px] flex flex-col gap-4 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
+                          {lyricsLoading ? (
+                            <div className="flex flex-col items-center gap-3 text-gray-400 py-8">
+                              <Loader2 className="w-8 h-8 animate-spin text-pink-400" />
+                              <span className="text-sm font-medium">Finding lyrics...</span>
+                            </div>
+                          ) : parsedLyrics && parsedLyrics.length > 0 ? (
+                            <div className="flex flex-col gap-6 py-12">
+                              {parsedLyrics.map((line, idx) => {
+                                const isActive = idx === activeLineIndex;
+                                return (
+                                  <div
+                                    key={idx}
+                                    ref={isActive ? activeLineRef : null}
+                                    className={`text-center transition-all duration-500 py-1.5 cursor-pointer font-extrabold text-xl sm:text-3xl select-none px-4 ${
+                                      isActive
+                                        ? "text-transparent bg-clip-text bg-linear-to-r from-purple-400 via-pink-400 to-rose-400 scale-105 drop-shadow-[0_0_15px_rgba(236,72,153,0.4)] opacity-100"
+                                        : "text-white/40 hover:text-white/80 opacity-80 hover:opacity-100 scale-95"
+                                    }`}
+                                    onClick={() => {
+                                      if (audioRef.current) audioRef.current.currentTime = line.time;
+                                      if (videoRef.current) videoRef.current.currentTime = line.time;
+                                      setCurrentTime(line.time);
+                                    }}
+                                  >
+                                    {line.text}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : lyrics ? (
+                            <p className="text-gray-300 text-center leading-relaxed whitespace-pre-wrap font-medium text-base sm:text-lg py-4 px-2">
+                              {lyrics}
+                            </p>
+                          ) : (
+                            <div className="text-center text-gray-500 font-medium py-8">
+                              No lyrics found for this track.
+                            </div>
+                          )}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  {/* Video Player & Downloads — always visible */}
                   <div className="space-y-6 pt-6 border-t border-white/10">
                     {/* Video Player */}
                     <div className="w-full bg-black/60 rounded-3xl p-3 border border-white/5 shadow-inner">
                       <video
+                        ref={videoRef}
+                        onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
+                        onVolumeChange={(e) => {
+                          const targetVolume = e.currentTarget.volume;
+                          const targetMuted = e.currentTarget.muted;
+                          setVolume(targetVolume);
+                          setMuted(targetMuted);
+                          localStorage.setItem("sekmusic_volume", String(targetVolume));
+                          localStorage.setItem("sekmusic_muted", String(targetMuted));
+                        }}
                         controls
                         controlsList="nodownload"
                         preload="metadata"

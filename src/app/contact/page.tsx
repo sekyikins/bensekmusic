@@ -18,7 +18,7 @@ export default function ContactPage() {
           <div className="absolute bottom-0 left-0 w-64 h-64 bg-purple-500/10 blur-3xl rounded-full -ml-20 -mb-20 pointer-events-none" />
 
           <p className="text-lg leading-relaxed relative z-10">
-            Have questions, feedback, or need support? We're here to help. Reach out to the SekMusic team via email, and we'll get back to you as soon as possible.
+            Have questions, feedback, or need support? We&apos;re here to help. Reach out to the SekMusic team via email, and we&apos;ll get back to you as soon as possible.
           </p>
 
           <div className="mt-10 p-6 bg-black/40 rounded-2xl border border-white/5 flex items-center gap-4 relative z-10">

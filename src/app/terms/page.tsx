@@ -21,7 +21,7 @@ export default function TermsPage() {
 
           <h2 className="text-xl font-bold text-white mt-8 mb-4">2. Description of Service</h2>
           <p>
-            SekMusic provides tools to extract, process, and download media files from publicly accessible URLs. The service is provided "as is" and "as available".
+            SekMusic provides tools to extract, process, and download media files from publicly accessible URLs. The service is provided &quot;as is&quot; and &quot;as available&quot;.
           </p>
 
           <h2 className="text-xl font-bold text-white mt-8 mb-4">3. User Responsibilities & Copyright</h2>

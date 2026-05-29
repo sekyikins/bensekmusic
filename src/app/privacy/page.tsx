@@ -30,7 +30,7 @@ export default function PrivacyPage() {
           </p>
           <ul className="list-disc pl-6 space-y-2 mt-2">
             <li>Google, as a third-party vendor, uses cookies to serve ads on our site.</li>
-            <li>Google's use of the DART cookie enables it to serve ads to our users based on previous visits to our site and other sites on the Internet.</li>
+            <li>Google&apos;s use of the DART cookie enables it to serve ads to our users based on previous visits to our site and other sites on the Internet.</li>
             <li>Users may opt-out of the use of the DART cookie by visiting the Google Ad and Content Network privacy policy.</li>
           </ul>
 

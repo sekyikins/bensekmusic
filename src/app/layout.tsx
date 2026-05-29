@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Outfit } from "next/font/google";
 import "./globals.css";
 import Script from "next/script";
+import Link from "next/link";
 
 const outfit = Outfit({ subsets: ["latin"] });
 
@@ -30,7 +31,20 @@ export default function RootLayout({
         <div className="fixed bottom-[-20%] right-[-10%] w-[50%] h-[50%] rounded-full bg-pink-600/20 blur-[120px] pointer-events-none -z-10 animate-pulse-glow" style={{ animationDelay: '2s' }} />
         
         <div className="flex flex-col min-h-screen relative z-10">
-          <main className="flex-grow">
+          <header className="sticky top-0 w-full border-b border-white/10 bg-black/40 backdrop-blur-md py-4 z-50">
+            <div className="max-w-4xl mx-auto px-4 flex items-center justify-between">
+              <Link href="/" className="flex items-center hover:opacity-90 transition-opacity">
+                <span className="bg-clip-text text-transparent bg-linear-to-br from-white via-white to-gray-500 drop-shadow-sm font-bold text-lg sm:text-xl">Sek</span>
+                <span className="font-extrabold text-lg sm:text-xl text-transparent bg-clip-text bg-linear-to-r from-purple-400 to-pink-500">Music</span>
+              </Link>
+              <nav className="flex items-center gap-6 text-sm font-medium text-gray-400">
+                <Link href="/about" className="hover:text-purple-500 transition-colors">About</Link>
+                <Link href="/contact" className="hover:text-purple-500 transition-colors">Contact</Link>
+              </nav>
+            </div>
+          </header>
+
+          <main className="grow">
             {children}
           </main>
           
@@ -44,11 +58,11 @@ export default function RootLayout({
                 <span>&copy; {new Date().getFullYear()}</span>
               </div>
               <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2">
-                <a href="/" className="hover:text-purple-500 transition-colors">Home</a>
-                <a href="/about" className="hover:text-purple-500 transition-colors">About</a>
-                <a href="/contact" className="hover:text-purple-500 transition-colors">Contact</a>
-                <a href="/privacy" className="hover:text-purple-500 transition-colors">Privacy</a>
-                <a href="/terms" className="hover:text-purple-500 transition-colors">Terms</a>
+                <Link href="/" className="hover:text-purple-500 transition-colors">Home</Link>
+                <Link href="/about" className="hover:text-purple-500 transition-colors">About</Link>
+                <Link href="/contact" className="hover:text-purple-500 transition-colors">Contact</Link>
+                <Link href="/privacy" className="hover:text-purple-500 transition-colors">Privacy</Link>
+                <Link href="/terms" className="hover:text-purple-500 transition-colors">Terms</Link>
               </div>
             </div>
           </footer>

@@ -26,7 +26,7 @@ export default function AboutPage() {
 
           <h2 className="text-2xl font-bold text-white mt-8 mb-4 relative z-10">Our Mission</h2>
           <p className="leading-relaxed relative z-10">
-            Our mission is to simplify media access. Whether you're an audio engineer looking for the highest quality lossless formats, a content creator needing quick access to specific video segments, or just a music enthusiast, SekMusic provides the tools to extract and process media with zero friction.
+            Our mission is to simplify media access. Whether you&apos;re an audio engineer looking for the highest quality lossless formats, a content creator needing quick access to specific video segments, or just a music enthusiast, SekMusic provides the tools to extract and process media with zero friction.
           </p>
 
           <h2 className="text-2xl font-bold text-white mt-8 mb-4 relative z-10">Technology</h2>
