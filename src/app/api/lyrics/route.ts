@@ -1,216 +1,160 @@
 import { NextRequest, NextResponse } from "next/server";
 
-interface LrcLibResult {
+function cleanString(str: string): string {
+  if (!str) return "";
+  
+  let clean = str;
+  
+  // 1. Remove anything inside brackets/parentheses, e.g. [Official Video], (Remastered)
+  clean = clean.replace(/[\(\[].*?[\)\]]/g, " ");
+  
+  // 2. Remove common video/audio suffix buzzwords
+  const buzzwords = [
+    /official\s+(music\s+)?video/gi,
+    /official\s+audio/gi,
+    /official\s+lyric\s+video/gi,
+    /lyric\s+video/gi,
+    /dance\s+performance\s+video/gi,
+    /performance\s+video/gi,
+    /live\s+performance/gi,
+    /music\s+video/gi,
+    /video\s+clip/gi,
+    /official\s+visualizer/gi,
+    /visualizer/gi,
+    /audio\s+only/gi,
+    /hq\s+audio/gi,
+    /4k/gi,
+    /hd/gi,
+    /1080p/gi,
+    /subtitle(s)?/gi,
+    /sub(s)?/gi,
+    /lyrics/gi,
+    /-\s*Topic/gi,
+    /\|\s*SekMusic/gi
+  ];
+  
+  for (const regex of buzzwords) {
+    clean = clean.replace(regex, " ");
+  }
+  
+  // 3. Clean up smart quotes and special characters
+  clean = clean.replace(/['"‘’“”]/g, "");
+  
+  // 4. Remove common separators and clean up spaces
+  clean = clean.replace(/[-|•–—\/]/g, " ");
+  clean = clean.replace(/\s+/g, " ").trim();
+  
+  return clean;
+}
+
+interface LrclibSearchResult {
   id: number;
   trackName: string;
   artistName: string;
-  albumName: string;
+  albumName: string | null;
   duration: number;
-  instrumental: boolean;
-  plainLyrics: string | null;
-  syncedLyrics: string | null;
+  plainLyrics?: string | null;
+  syncedLyrics?: string | null;
 }
 
-/**
- * Clean title string by removing common YouTube suffixes,
- * parenthetical tags, and other noise so the lyrics search
- * has a better chance of matching.
- */
-function cleanTitle(raw: string): string {
-  if (!raw) return "";
-  return raw
-    .replace(/\s*\(.*?\)\s*/g, " ")       // (Official Video), (Lyrics), etc.
-    .replace(/\s*\[.*?\]\s*/g, " ")       // [Official Audio], [HD], etc.
-    .replace(/\s*[-|].*?(official|lyric|audio|video|visualizer|full|hd|4k|remastered|version|prod|explicit).*$/gi, "")
-    .replace(/\s*[-|]\s*Topic\s*$/gi, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/**
- * Parse synced LRC lyrics into plain text by stripping timestamps.
- * "[00:12.34] Some line" → "Some line"
- */
-function parseSyncedLyrics(synced: string): string {
-  return synced
-    .split(/\r?\n/)
-    .map((line) => line.replace(/^\[[\d:.]+\]\s*/, "").trim())
-    .filter(Boolean)
-    .join("\n");
-}
-
-/**
- * Robustly parses the raw title and artist from YouTube metadata
- * to separate the true track title and artist name.
- */
-function parseTitleAndArtist(rawTitle: string, rawArtist: string) {
-  let artist = cleanTitle(rawArtist);
-  let title = cleanTitle(rawTitle);
-
-  // Check if artist is missing/unknown/placeholder
-  const isUnknownArtist = !artist || /unknown|various|topic|sekmusic/i.test(artist);
-
-  if (title.includes("-")) {
-    const parts = title.split("-");
-    const part0 = parts[0].trim();
-    const part1 = parts.slice(1).join("-").trim();
-
-    if (isUnknownArtist) {
-      artist = part0;
-      title = part1;
-    } else {
-      const artistLower = artist.toLowerCase();
-      if (part0.toLowerCase() === artistLower || artistLower.includes(part0.toLowerCase()) || part0.toLowerCase().includes(artistLower)) {
-        title = part1;
-      } else if (part1.toLowerCase() === artistLower || artistLower.includes(part1.toLowerCase()) || part1.toLowerCase().includes(artistLower)) {
-        title = part0;
+async function searchLrclib(query: string): Promise<LrclibSearchResult[]> {
+  const lrclibUrl = `https://lrclib.net/api/search?q=${encodeURIComponent(query)}`;
+  try {
+    const res = await fetch(lrclibUrl, {
+      headers: {
+        "User-Agent": "SekMusic/1.0 (https://github.com/sekyikins/bensekmusic)"
       }
-    }
-  } else if (title.includes("|")) {
-    const parts = title.split("|");
-    const part0 = parts[0].trim();
-    const part1 = parts.slice(1).join("|").trim();
+    });
 
-    if (isUnknownArtist) {
-      artist = part0;
-      title = part1;
-    } else {
-      const artistLower = artist.toLowerCase();
-      if (part0.toLowerCase() === artistLower || artistLower.includes(part0.toLowerCase()) || part0.toLowerCase().includes(artistLower)) {
-        title = part1;
-      } else if (part1.toLowerCase() === artistLower || artistLower.includes(part1.toLowerCase()) || part1.toLowerCase().includes(artistLower)) {
-        title = part0;
-      }
+    if (!res.ok) {
+      console.warn(`LRCLIB search warning: ${res.statusText} for query: ${query}`);
+      return [];
     }
+
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
+  } catch (err) {
+    console.error(`LRCLIB search error for query: ${query}`, err);
+    return [];
   }
-
-  artist = cleanTitle(artist);
-  title = cleanTitle(title);
-
-  return { artist, title };
 }
 
 export async function GET(req: NextRequest) {
   try {
     const url = new URL(req.url);
-    const rawTitle = url.searchParams.get("title") || "";
-    const rawArtist = url.searchParams.get("artist") || "";
-    const durationParam = url.searchParams.get("duration");
+    const title = url.searchParams.get("title");
+    const artist = url.searchParams.get("artist");
+    const durationStr = url.searchParams.get("duration");
+    const duration = durationStr ? parseFloat(durationStr) : null;
 
-    if (!rawTitle) {
-      return NextResponse.json(
-        { lyrics: "No track title provided." },
-        { status: 400 }
-      );
+    if (!title || !artist) {
+      return NextResponse.json({ error: "Missing title or artist parameter" }, { status: 400 });
     }
 
-    const { artist, title } = parseTitleAndArtist(rawTitle, rawArtist);
-    const duration = durationParam ? parseInt(durationParam, 10) : undefined;
+    const cleanTitle = cleanString(title);
+    const cleanArtist = cleanString(artist);
 
-    // --- Strategy 1: Direct GET (exact match) ---
-    if (artist && title) {
-      // Strategy 1a: GET with duration if available
-      if (duration) {
-        try {
-          const directParams = new URLSearchParams({
-            track_name: title,
-            artist_name: artist,
-            duration: String(duration),
-          });
-          const directRes = await fetch(
-            `https://lrclib.net/api/get?${directParams.toString()}`,
-            {
-              headers: { "User-Agent": "SekMusic/1.0 (https://sekmusic.com)" },
-              signal: AbortSignal.timeout(5000),
-            }
-          );
-          if (directRes.ok) {
-            const data: LrcLibResult = await directRes.json();
-            if (data.plainLyrics || data.syncedLyrics) {
-              const lyrics = data.plainLyrics || parseSyncedLyrics(data.syncedLyrics!);
-              return NextResponse.json({
-                lyrics,
-                syncedLyrics: data.syncedLyrics,
-              });
-            }
-          }
-        } catch {
-          // Fall through
+    // Build the primary query
+    let primaryQuery = cleanTitle;
+    if (cleanArtist && !cleanTitle.toLowerCase().includes(cleanArtist.toLowerCase())) {
+      primaryQuery = `${cleanTitle} ${cleanArtist}`;
+    }
+
+    console.log(`Lyrics search primary query: "${primaryQuery}" (Original: "${title}" by "${artist}")`);
+
+    // Tier 1: Try with primary cleaned query
+    let results = await searchLrclib(primaryQuery);
+
+    // Tier 2: If no results and cleanTitle is different from primaryQuery, try just cleanTitle
+    if (results.length === 0 && cleanTitle && cleanTitle !== primaryQuery) {
+      console.log(`Lyrics search Tier 2 query: "${cleanTitle}"`);
+      results = await searchLrclib(cleanTitle);
+    }
+
+    // Tier 3: Last resort, try original title + artist
+    if (results.length === 0) {
+      const fallbackQuery = `${title} ${artist}`.trim();
+      console.log(`Lyrics search Tier 3 (fallback) query: "${fallbackQuery}"`);
+      results = await searchLrclib(fallbackQuery);
+    }
+
+    if (results.length === 0) {
+      return NextResponse.json({ error: "No lyrics found" }, { status: 404 });
+    }
+
+    // Filter results to only those that actually have plain or synced lyrics
+    const validResults = results.filter(item => item.plainLyrics || item.syncedLyrics);
+
+    if (validResults.length === 0) {
+      return NextResponse.json({ error: "No valid lyrics found in search results" }, { status: 404 });
+    }
+
+    // Find the record with the closest duration to the requested duration
+    let bestMatch = validResults[0];
+    if (duration !== null) {
+      let minDiff = Infinity;
+      for (const item of validResults) {
+        const diff = Math.abs(item.duration - duration);
+        if (diff < minDiff) {
+          minDiff = diff;
+          bestMatch = item;
         }
       }
-
-      // Strategy 1b: GET without duration
-      try {
-        const directParams = new URLSearchParams({
-          track_name: title,
-          artist_name: artist,
-        });
-        const directRes = await fetch(
-          `https://lrclib.net/api/get?${directParams.toString()}`,
-          {
-            headers: { "User-Agent": "SekMusic/1.0 (https://sekmusic.com)" },
-            signal: AbortSignal.timeout(5000),
-          }
-        );
-        if (directRes.ok) {
-          const data: LrcLibResult = await directRes.json();
-          if (data.plainLyrics || data.syncedLyrics) {
-            const lyrics = data.plainLyrics || parseSyncedLyrics(data.syncedLyrics!);
-            return NextResponse.json({
-              lyrics,
-              syncedLyrics: data.syncedLyrics,
-            });
-          }
-        }
-      } catch {
-        // Fall through
-      }
     }
-
-    // --- Strategy 2: Search endpoint (fuzzy match fallback) ---
-    const searchQuery = artist ? `${artist} ${title}` : title;
-    const searchRes = await fetch(
-      `https://lrclib.net/api/search?q=${encodeURIComponent(searchQuery)}`,
-      {
-        headers: { "User-Agent": "SekMusic/1.0 (https://sekmusic.com)" },
-        signal: AbortSignal.timeout(8000),
-      }
-    );
-
-    if (!searchRes.ok) {
-      const body = await searchRes.text().catch(() => "");
-      return NextResponse.json({
-        lyrics: `Could not retrieve lyrics.\nDebug: status=${searchRes.status}, title="${title}", artist="${artist}", query="${searchQuery}"\nBody: ${body.slice(0, 200)}`,
-      });
-    }
-
-    const results: LrcLibResult[] = await searchRes.json();
-
-    if (!results || results.length === 0) {
-      return NextResponse.json({
-        lyrics: "No lyrics found for this track.",
-      });
-    }
-
-    // Pick the best result: prefer one with plainLyrics, then syncedLyrics
-    const best =
-      results.find((r) => r.plainLyrics) ||
-      results.find((r) => r.syncedLyrics) ||
-      results[0];
-
-    const lyrics = best.plainLyrics || (best.syncedLyrics ? parseSyncedLyrics(best.syncedLyrics) : "No lyrics content.");
 
     return NextResponse.json({
-      lyrics,
-      syncedLyrics: best.syncedLyrics || null,
+      id: bestMatch.id,
+      trackName: bestMatch.trackName,
+      artistName: bestMatch.artistName,
+      albumName: bestMatch.albumName,
+      duration: bestMatch.duration,
+      lyrics: bestMatch.plainLyrics || null,
+      syncedLyrics: bestMatch.syncedLyrics || null
     });
+
   } catch (error: unknown) {
-    const errorMessage =
-      error instanceof Error ? error.message : String(error);
-    console.error("Lyrics error:", errorMessage);
-    return NextResponse.json(
-      { error: `Failed to fetch lyrics: ${errorMessage}` },
-      { status: 500 }
-    );
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error("Lyrics API error:", errorMessage);
+    return NextResponse.json({ error: `Lyrics fetch error: ${errorMessage}` }, { status: 500 });
   }
 }

@@ -32,12 +32,12 @@ export default function Error({
         </h1>
 
         <p className="text-gray-400 font-medium mb-8 leading-relaxed">
-          An error occurred while loading this page. Let&apos;s try reloading the player to see if it fixes the issue.
+          An error occurred while loading this page. Try reloading the player to see if it fixes the issue.
         </p>
 
         <button
           onClick={() => reset()}
-          className="bg-white text-black px-8 py-4 rounded-2xl font-bold transition-all hover:shadow-[0_0_25px_rgba(255,255,255,0.4)]"
+          className="bg-white text-black px-8 py-4 rounded-2xl cursor-pointer font-bold transition-all hover:shadow-[0_0_25px_rgba(255,255,255,0.4)]"
         >
           Try Again
         </button>

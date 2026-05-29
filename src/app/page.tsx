@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import Image from "next/image";
 import { motion, AnimatePresence, Variants } from "framer-motion";
-import { Search, Link as LinkIcon, Upload, Music, Loader2, Play, Pause, Download, ExternalLink, Sparkles, AudioLines, History } from "lucide-react";
+import { Search, Link as LinkIcon, Upload, Music, Loader2, Play, Pause, Download, ExternalLink, Sparkles, AudioLines, History, RefreshCw, Copy, Check, Clock, ChevronDown, FileText } from "lucide-react";
 
 interface SearchResult {
   id: string;
@@ -23,7 +23,9 @@ export default function Home() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const sourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const videoSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const animationRef = useRef<number | null>(null);
+  const lastActiveMediaRef = useRef<"audio" | "video">("audio");
 
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
@@ -54,6 +56,9 @@ export default function Home() {
   const [lyricsLoading, setLyricsLoading] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const activeLineRef = useRef<HTMLDivElement>(null);
+  const lyricsContainerRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [copyDropdownOpen, setCopyDropdownOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"player" | "lyrics">(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("sekmusic_active_tab");
@@ -103,31 +108,214 @@ export default function Home() {
     localStorage.setItem("sekmusic_active_tab", activeTab);
   }, [activeTab]);
 
-  const fetchLyrics = async (title: string, artist: string, duration?: number) => {
-    setLyricsLoading(true);
+  // Fetch lyrics when selectedResult changes
+  useEffect(() => {
+    if (!selectedResult) return;
+
+    const loadLyrics = async () => {
+      setLyricsLoading(true);
+      try {
+        const title = selectedResult.title;
+        const artist = selectedResult.artist;
+        const duration = selectedResult.duration;
+
+        const res = await fetch(
+          `/api/lyrics?title=${encodeURIComponent(title)}&artist=${encodeURIComponent(artist)}&duration=${duration}`
+        );
+        if (!res.ok) throw new Error("Lyrics not found");
+
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+
+        setLyrics(data.lyrics);
+        setSyncedLyrics(data.syncedLyrics);
+      } catch (err) {
+        console.error("Error loading lyrics:", err);
+        setLyrics(null);
+        setSyncedLyrics(null);
+      } finally {
+        setLyricsLoading(false);
+      }
+    };
+
+    loadLyrics();
+  }, [selectedResult]);
+
+  // Copy state: null | "current" | "timed" | "plain"
+  const [copiedState, setCopiedState] = useState<null | "current" | "timed" | "plain">(null);
+
+  // Click outside handler for copy dropdown
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setCopyDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
+
+  const refreshLyrics = async () => {
+    if (!selectedResult || lyricsLoading) return;
     setLyrics(null);
     setSyncedLyrics(null);
+    setLyricsLoading(true);
     try {
-      const params = new URLSearchParams({ title, artist });
-      if (duration) params.set("duration", String(Math.round(duration)));
-      const res = await fetch(`/api/lyrics?${params.toString()}`);
-      if (res.ok) {
-        const data = await res.json();
-        setLyrics(data.lyrics || "No lyrics found.");
-        setSyncedLyrics(data.syncedLyrics || null);
-      } else {
-        setLyrics("Could not retrieve lyrics for this track.");
-      }
+      const res = await fetch(
+        `/api/lyrics?title=${encodeURIComponent(selectedResult.title)}&artist=${encodeURIComponent(selectedResult.artist)}&duration=${selectedResult.duration}`
+      );
+      if (!res.ok) throw new Error("Lyrics not found");
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setLyrics(data.lyrics);
+      setSyncedLyrics(data.syncedLyrics);
     } catch (err) {
-      console.error("Failed to fetch lyrics:", err);
-      setLyrics("Error retrieving lyrics.");
+      console.error("Error refreshing lyrics:", err);
+      setLyrics(null);
+      setSyncedLyrics(null);
     } finally {
       setLyricsLoading(false);
     }
   };
 
+  const copyLyrics = (type: "current" | "timed" | "plain") => {
+    let text = "";
+    if (type === "current") {
+      if (parsedLyrics && activeLineIndex >= 0 && activeLineIndex < parsedLyrics.length) {
+        text = parsedLyrics[activeLineIndex].text;
+      }
+    } else if (type === "timed" && syncedLyrics) {
+      text = syncedLyrics;
+    } else if (type === "plain") {
+      if (lyrics) {
+        text = lyrics;
+      } else if (parsedLyrics) {
+        text = parsedLyrics.map((l) => l.text).join("\n");
+      }
+    }
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedState(type);
+      setTimeout(() => setCopiedState(null), 2000);
+    });
+  };
+
+  const draw = (analyser: AnalyserNode, canvas: HTMLCanvasElement) => {
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+
+    const renderFrame = () => {
+      animationRef.current = requestAnimationFrame(renderFrame);
+      analyser.getByteFrequencyData(dataArray);
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const width = canvas.width;
+      const height = canvas.height;
+      const barWidth = (width / bufferLength) * 1.5;
+      let barHeight;
+      let x = 0;
+
+      for (let i = 0; i < bufferLength; i++) {
+        barHeight = (dataArray[i] / 255) * height * 0.8;
+        const gradient = ctx.createLinearGradient(0, height, 0, height - barHeight);
+        gradient.addColorStop(0, "#a855f7"); // purple
+        gradient.addColorStop(1, "#ec4899"); // pink
+
+        ctx.fillStyle = gradient;
+        ctx.fillRect(x, height - barHeight, barWidth - 2, barHeight);
+        x += barWidth;
+      }
+    };
+
+    renderFrame();
+  };
+
+  const initVisualizer = () => {
+    if (!canvasRef.current) return;
+    try {
+      const AudioContextClass = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      // Create context if it doesn't exist yet
+      if (!audioContextRef.current) {
+        audioContextRef.current = new AudioContextClass();
+      }
+      const audioCtx = audioContextRef.current;
+      if (!analyserRef.current) {
+        analyserRef.current = audioCtx.createAnalyser();
+        analyserRef.current.fftSize = 64;
+      }
+      const analyser = analyserRef.current;
+
+      // Connect audio element if present and not yet connected
+      if (audioRef.current && !sourceRef.current) {
+        sourceRef.current = audioCtx.createMediaElementSource(audioRef.current);
+        sourceRef.current.connect(analyser);
+      }
+      // Connect video element if present and not yet connected
+      if (videoRef.current && !videoSourceRef.current) {
+        videoSourceRef.current = audioCtx.createMediaElementSource(videoRef.current);
+        videoSourceRef.current.connect(analyser);
+      }
+      // Ensure analyser feeds destination (needed for playback on some browsers)
+      analyser.connect(audioCtx.destination);
+
+      draw(analyser, canvasRef.current);
+    } catch (err) {
+      console.error("Failed to initialize visualizer:", err);
+    }
+  };
+
+  const togglePlay = async () => {
+    if (!audioContextRef.current) {
+      initVisualizer();
+    } else if (audioContextRef.current.state === "suspended") {
+      await audioContextRef.current.resume();
+    }
+
+    const activeMedia = lastActiveMediaRef.current;
+    const activeEl = activeMedia === "video" ? videoRef.current : audioRef.current;
+    const otherEl = activeMedia === "video" ? audioRef.current : videoRef.current;
+
+    if (!activeEl) return;
+
+    if (!activeEl.paused) {
+      activeEl.pause();
+      if (otherEl && !otherEl.paused) otherEl.pause();
+    } else {
+      if (otherEl && !otherEl.paused) otherEl.pause();
+      activeEl.play().catch((err) => console.error("Playback error:", err));
+    }
+  };
+
+  // Spacebar play/pause
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== "Space") return;
+      // Don't hijack spacebar when user is typing in an input/textarea
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      e.preventDefault();
+      togglePlay();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  });
+
+
   const selectSong = (song: SearchResult | null) => {
     setSelectedResult(song);
+    
+    // Reset lyrics state on any track change or clear
+    setLyrics(null);
+    setSyncedLyrics(null);
+    setCurrentTime(0);
+
     if (song) {
       setHistory((prev) => {
         const filtered = prev.filter((item) => item.id !== song.id);
@@ -135,14 +323,6 @@ export default function Home() {
         localStorage.setItem("sekmusic_history", JSON.stringify(updated));
         return updated;
       });
-
-      // Reset lyrics setup
-      setLyrics(null);
-      setSyncedLyrics(null);
-      setCurrentTime(0);
-
-      // Fetch lyrics automatically
-      fetchLyrics(song.title, song.artist, song.duration);
     }
   };
 
@@ -184,72 +364,29 @@ export default function Home() {
     return index;
   })();
 
-  // Smooth scroll active line to center
+  // Smooth scroll active line to center within the lyrics container only
   useEffect(() => {
-    if (activeLineRef.current) {
-      activeLineRef.current.scrollIntoView({
+    if (activeLineRef.current && lyricsContainerRef.current) {
+      const container = lyricsContainerRef.current;
+      const activeLine = activeLineRef.current;
+      
+      const containerRect = container.getBoundingClientRect();
+      const activeLineRect = activeLine.getBoundingClientRect();
+      
+      // Calculate the offset of the active line relative to the container's top edge
+      const relativeTop = activeLineRect.top - containerRect.top + container.scrollTop;
+      
+      // Calculate the target scroll position to center the active line
+      const targetScrollTop = relativeTop - (containerRect.height / 2) + (activeLineRect.height / 2);
+      
+      container.scrollTo({
+        top: targetScrollTop,
         behavior: "smooth",
-        block: "center",
       });
     }
   }, [activeLineIndex]);
 
-  const initVisualizer = () => {
-    if (!audioRef.current || !canvasRef.current) return;
-    if (audioContextRef.current) return;
 
-    try {
-      const AudioContextClass = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      const audioCtx = new AudioContextClass();
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 64;
-      const source = audioCtx.createMediaElementSource(audioRef.current);
-      source.connect(analyser);
-      analyser.connect(audioCtx.destination);
-
-      audioContextRef.current = audioCtx;
-      analyserRef.current = analyser;
-      sourceRef.current = source;
-
-      draw(analyser, canvasRef.current);
-    } catch (err) {
-      console.error("Failed to initialize visualizer:", err);
-    }
-  };
-
-  const draw = (analyser: AnalyserNode, canvas: HTMLCanvasElement) => {
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    const bufferLength = analyser.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
-
-    const renderFrame = () => {
-      animationRef.current = requestAnimationFrame(renderFrame);
-      analyser.getByteFrequencyData(dataArray);
-
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      const width = canvas.width;
-      const height = canvas.height;
-      const barWidth = (width / bufferLength) * 1.5;
-      let barHeight;
-      let x = 0;
-
-      for (let i = 0; i < bufferLength; i++) {
-        barHeight = (dataArray[i] / 255) * height * 0.8;
-        const gradient = ctx.createLinearGradient(0, height, 0, height - barHeight);
-        gradient.addColorStop(0, "#a855f7"); // purple
-        gradient.addColorStop(1, "#ec4899"); // pink
-
-        ctx.fillStyle = gradient;
-        ctx.fillRect(x, height - barHeight, barWidth - 2, barHeight);
-        x += barWidth;
-      }
-    };
-
-    renderFrame();
-  };
 
   const handlePasteLink = async () => {
     try {
@@ -262,21 +399,7 @@ export default function Home() {
     }
   };
 
-  const togglePlay = async () => {
-    if (!audioRef.current) return;
 
-    if (!audioContextRef.current) {
-      initVisualizer();
-    } else if (audioContextRef.current.state === "suspended") {
-      await audioContextRef.current.resume();
-    }
-
-    if (isPlaying) {
-      audioRef.current.pause();
-    } else {
-      audioRef.current.play().catch((err) => console.error("Playback error:", err));
-    }
-  };
 
   const getCleanSearchQuery = (title: string, artist: string) => {
     const cleanArtist = artist.replace(/\s*(music|vevo|official|channel|records|productions)$/gi, '').trim();
@@ -684,18 +807,28 @@ export default function Home() {
                           {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6" />}
                         </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => setActiveTab(activeTab === "lyrics" ? "player" : "lyrics")}
-                        className={`w-fit px-5 py-2 rounded-full text-sm font-bold transition-all flex items-center gap-2 cursor-pointer border backdrop-blur-md ${
-                          activeTab === "lyrics"
-                            ? "bg-white text-black shadow-md border-white/20"
-                            : "bg-white/5 border-white/10 text-gray-400 hover:text-white hover:bg-white/10"
-                        }`}
-                      >
-                        {activeTab === "lyrics" ? "Hide Lyrics" : "Show Lyrics"}
-                        {lyricsLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab(activeTab === "lyrics" ? "player" : "lyrics")}
+                          className={`w-fit px-5 py-2 rounded-full text-sm font-bold transition-all flex items-center gap-2 cursor-pointer border backdrop-blur-md ${
+                            activeTab === "lyrics"
+                              ? "bg-white text-black shadow-md border-white/20"
+                              : "bg-white/5 border-white/10 text-gray-400 hover:text-white hover:bg-white/10"
+                          }`}
+                        >
+                          {activeTab === "lyrics" ? "Hide Lyrics" : "Show Lyrics"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={refreshLyrics}
+                          disabled={lyricsLoading}
+                          title="Refresh lyrics"
+                          className="p-3 rounded-full bg-white/5 border border-white/10 text-gray-300 hover:text-white hover:bg-white/10 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed backdrop-blur-md"
+                        >
+                          <RefreshCw className={`w-4.5 h-4.5 ${lyricsLoading ? "animate-spin" : ""}`} />
+                        </button>
+                      </div>
                     </div>
 
                     {/* Info & Audio Player */}
@@ -717,8 +850,21 @@ export default function Home() {
                         <div className="absolute inset-0 bg-linear-to-r from-pink-500/10 to-purple-500/10 opacity-0 group-hover:opacity-100 transition-opacity" />
                         <audio
                           ref={audioRef}
-                          onPlay={() => setIsPlaying(true)}
-                          onPause={() => setIsPlaying(false)}
+                          onPlay={() => {
+                            lastActiveMediaRef.current = "audio";
+                            setIsPlaying(true);
+                            if (!audioContextRef.current) initVisualizer();
+                            // Pause video if it is playing
+                            if (videoRef.current && !videoRef.current.paused) {
+                              videoRef.current.pause();
+                            }
+                          }}
+                          onPause={() => {
+                            // Only set not playing if both media are paused
+                            if (videoRef.current?.paused && (videoRef.current.paused ?? true)) {
+                              setIsPlaying(false);
+                            }
+                          }}
                           onEnded={() => setIsPlaying(false)}
                           onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
                           onVolumeChange={(e) => {
@@ -732,7 +878,7 @@ export default function Home() {
                           controls
                           controlsList="nodownload"
                           preload="metadata"
-                          className="w-full outline-none h-12 [&::-webkit-media-controls-panel]:bg-transparent [&::-webkit-media-controls-current-time-display]:text-white [&::-webkit-media-controls-time-remaining-display]:text-white relative z-10 filter invert grayscale contrast-200 opacity-90"
+                          className="w-full outline-none h-12 relative z-10 filter invert grayscale opacity-90"
                           src={`/api/download?url=${encodeURIComponent(selectedResult.url)}&type=audio&filename=${encodeURIComponent(`${selectedResult.title} -by- ${selectedResult.artist} - SekMusic`)}`}
                         >
                           Your browser does not support the audio element.
@@ -757,8 +903,91 @@ export default function Home() {
                         exit={{ opacity: 0, height: 0 }}
                         transition={{ duration: 0.3, ease: "easeInOut" }}
                         className="overflow-hidden mb-8"
-                      >
-                        <div className="bg-black/40 border border-white/5 rounded-3xl p-6 sm:p-8 backdrop-blur-md relative overflow-y-auto max-h-[400px] flex flex-col gap-4 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
+                      >                        <div ref={lyricsContainerRef} className="bg-black/40 border border-white/5 rounded-3xl p-6 sm:p-8 backdrop-blur-md relative overflow-hidden max-h-[400px] flex flex-col gap-4">
+                          {/* Copy toolbar */}
+                          {!lyricsLoading && (lyrics || syncedLyrics) && (
+                            <div className="flex items-center justify-end gap-2 mb-1 sticky top-0 z-25" ref={dropdownRef}>
+                              <div className="relative">
+                                <button
+                                  type="button"
+                                  onClick={() => setCopyDropdownOpen(!copyDropdownOpen)}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-white/5 border border-white/10 text-gray-400 hover:text-white hover:bg-white/10 transition-all cursor-pointer backdrop-blur-md shadow-sm"
+                                >
+                                  {copiedState ? (
+                                    <>
+                                      <Check className="w-3.5 h-3.5 text-green-400" />
+                                      <span className="text-green-400">Copied!</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Copy className="w-3.5 h-3.5" />
+                                      <span>Copy</span>
+                                    </>
+                                  )}
+                                  <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${copyDropdownOpen ? "rotate-180" : ""}`} />
+                                </button>
+
+                                <AnimatePresence>
+                                  {copyDropdownOpen && (
+                                    <motion.div
+                                      initial={{ opacity: 0, scale: 0.95, y: -10 }}
+                                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                                      exit={{ opacity: 0, scale: 0.95, y: -10 }}
+                                      transition={{ duration: 0.15 }}
+                                      className="absolute right-0 mt-2 w-48 rounded-xl bg-black/90 border border-white/10 p-1.5 shadow-2xl backdrop-blur-md z-30"
+                                    >
+                                      {parsedLyrics && activeLineIndex >= 0 && activeLineIndex < parsedLyrics.length && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            copyLyrics("current");
+                                            setCopyDropdownOpen(false);
+                                          }}
+                                          className="flex items-center justify-between w-full text-left px-3 py-2 rounded-lg text-xs font-medium text-gray-300 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                                        >
+                                          <div className="flex items-center gap-2">
+                                            <Music className="w-3.5 h-3.5 text-pink-400" />
+                                            <span>Current Line</span>
+                                          </div>
+                                          {copiedState === "current" && <Check className="w-3 h-3 text-green-400" />}
+                                        </button>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          copyLyrics("plain");
+                                          setCopyDropdownOpen(false);
+                                        }}
+                                        className="flex items-center justify-between w-full text-left px-3 py-2 rounded-lg text-xs font-medium text-gray-300 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                                      >
+                                        <div className="flex items-center gap-2">
+                                          <FileText className="w-3.5 h-3.5 text-purple-400" />
+                                          <span>Plain Lyrics</span>
+                                        </div>
+                                        {copiedState === "plain" && <Check className="w-3 h-3 text-green-400" />}
+                                      </button>
+                                      {syncedLyrics && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            copyLyrics("timed");
+                                            setCopyDropdownOpen(false);
+                                          }}
+                                          className="flex items-center justify-between w-full text-left px-3 py-2 rounded-lg text-xs font-medium text-gray-300 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                                        >
+                                          <div className="flex items-center gap-2">
+                                            <Clock className="w-3.5 h-3.5 text-blue-400" />
+                                            <span>Timed Lyrics</span>
+                                          </div>
+                                          {copiedState === "timed" && <Check className="w-3 h-3 text-green-400" />}
+                                        </button>
+                                      )}
+                                    </motion.div>
+                                  )}
+                                </AnimatePresence>
+                              </div>
+                            </div>
+                          )}
                           {lyricsLoading ? (
                             <div className="flex flex-col items-center gap-3 text-gray-400 py-8">
                               <Loader2 className="w-8 h-8 animate-spin text-pink-400" />
@@ -816,6 +1045,23 @@ export default function Home() {
                           setMuted(targetMuted);
                           localStorage.setItem("sekmusic_volume", String(targetVolume));
                           localStorage.setItem("sekmusic_muted", String(targetMuted));
+                        }}
+                        onPlay={() => {
+                          lastActiveMediaRef.current = "video";
+                          // Initialize visualizer if not already
+                          if (!audioContextRef.current) initVisualizer();
+                          // Pause audio if it is playing
+                          if (audioRef.current && !audioRef.current.paused) {
+                            audioRef.current.pause();
+                          }
+                          // Indicate media is playing
+                          setIsPlaying(true);
+                        }}
+                        onPause={() => {
+                          // If both media are paused, update playing state
+                          if (audioRef.current?.paused && videoRef.current?.paused) {
+                            setIsPlaying(false);
+                          }
                         }}
                         controls
                         controlsList="nodownload"
