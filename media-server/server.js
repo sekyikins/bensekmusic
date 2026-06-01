@@ -2,8 +2,9 @@ import express from "express";
 import cors from "cors";
 import path from "path";
 import fs from "fs";
+import https from "node:https";
+import http from "node:http";
 import { fileURLToPath } from "url";
-import { Readable } from "node:stream";
 import ytDlp from "yt-dlp-exec";
 import crypto from "crypto";
 
@@ -71,8 +72,9 @@ app.get("/api/stream", async (req, res) => {
     return res.status(400).json({ error: "Missing video URL" });
   }
 
+  const cacheKey = `${targetUrl}:${type}`;
+
   try {
-    const cacheKey = `${targetUrl}:${type}`;
     let directUrl = getCachedFormatUrl(cacheKey);
 
     if (!directUrl) {
@@ -119,39 +121,48 @@ app.get("/api/stream", async (req, res) => {
       setCachedFormatUrl(cacheKey, directUrl);
     }
 
-    const proxyHeaders = {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    };
-    if (req.headers.range) proxyHeaders["range"] = req.headers.range;
-
-    const upstream = await fetch(directUrl, { headers: proxyHeaders });
-
-    if (!upstream.ok && upstream.status !== 206) {
-      // If upstream rejected (e.g. URL expired), clear cache and fail
-      formatCache.delete(`${targetUrl}:${type}`);
-      throw new Error(`Upstream returned ${upstream.status}. Try again.`);
-    }
-
     const contentType = type === "video" ? "video/mp4" : "audio/mp4";
     const ext = type === "video" ? "mp4" : "m4a";
     const baseFilename = filenameParam || "sekmusic-dl";
     const encodedFilename = encodeURIComponent(`${baseFilename}.${ext}`);
     const dispositionType = dl === "1" ? "attachment" : "inline";
 
-    res.status(upstream.status);
-    res.set("Content-Type", contentType);
-    res.set("Content-Disposition", `${dispositionType}; filename*=UTF-8''${encodedFilename}`);
-    res.set("Accept-Ranges", "bytes");
-    res.set("Cache-Control", "no-cache");
+    const parsedUrl = new URL(directUrl);
+    const requester = parsedUrl.protocol === "https:" ? https : http;
+    const proxyReqHeaders = {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    };
+    if (req.headers.range) proxyReqHeaders["range"] = req.headers.range;
 
-    const contentLength = upstream.headers.get("content-length");
-    const contentRange = upstream.headers.get("content-range");
-    if (contentLength) res.set("Content-Length", contentLength);
-    if (contentRange) res.set("Content-Range", contentRange);
+    const proxyReq = requester.request(
+      { hostname: parsedUrl.hostname, path: parsedUrl.pathname + parsedUrl.search, headers: proxyReqHeaders },
+      (proxyRes) => {
+        if (proxyRes.statusCode !== 200 && proxyRes.statusCode !== 206) {
+          formatCache.delete(cacheKey);
+          if (!res.headersSent) res.status(proxyRes.statusCode || 502).json({ error: `Upstream returned ${proxyRes.statusCode}` });
+          proxyRes.resume();
+          return;
+        }
 
-    const nodeStream = Readable.fromWeb(upstream.body);
-    nodeStream.pipe(res);
-    req.on("close", () => nodeStream.destroy());
+        res.status(proxyRes.statusCode);
+        res.set("Content-Type", contentType);
+        res.set("Content-Disposition", `${dispositionType}; filename*=UTF-8''${encodedFilename}`);
+        res.set("Accept-Ranges", "bytes");
+        res.set("Cache-Control", "no-cache");
+        if (proxyRes.headers["content-length"]) res.set("Content-Length", proxyRes.headers["content-length"]);
+        if (proxyRes.headers["content-range"]) res.set("Content-Range", proxyRes.headers["content-range"]);
+
+        proxyRes.pipe(res);
+        req.on("close", () => proxyReq.destroy());
+      }
+    );
+
+    proxyReq.on("error", (err) => {
+      console.error("Proxy request error:", err.message);
+      if (!res.headersSent) res.status(502).json({ error: err.message });
+    });
+
+    proxyReq.end();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("Stream error:", msg);
