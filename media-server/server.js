@@ -8,6 +8,11 @@ import { fileURLToPath } from "url";
 import ytDlp from "yt-dlp-exec";
 import crypto from "crypto";
 
+// Player-client chain that bypasses YouTube's bot check on datacenter IPs.
+// `tv` and `ios` rarely trigger the check; `web` is the fallback for non-YT sources.
+const YT_EXTRACTOR_ARGS = "youtube:player_client=tv,ios,web";
+const YT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -82,6 +87,9 @@ app.get("/api/stream", async (req, res) => {
         dumpSingleJson: true,
         noCheckCertificate: true,
         noWarnings: true,
+        noPlaylist: true,
+        extractorArgs: YT_EXTRACTOR_ARGS,
+        userAgent: YT_UA,
       });
 
       if (!info || !Array.isArray(info.formats)) {
@@ -164,11 +172,22 @@ app.get("/api/stream", async (req, res) => {
 
     proxyReq.end();
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = formatYtDlpError(err);
     console.error("Stream error:", msg);
     if (!res.headersSent) res.status(500).json({ error: msg });
   }
 });
+
+// yt-dlp-exec rejects with the child-process result; the real cause lives on
+// .stderr, not .message. Surface both so Render logs show the actual failure.
+function formatYtDlpError(err) {
+  if (!err) return "unknown error";
+  const parts = [];
+  if (err.message) parts.push(err.message);
+  if (err.stderr) parts.push(String(err.stderr).trim());
+  if (err.shortMessage) parts.push(err.shortMessage);
+  return parts.length ? parts.join(" | ") : String(err);
+}
 
 // Media check and download trigger endpoint (caches file to disk)
 app.get("/api/download", async (req, res) => {
@@ -221,6 +240,9 @@ app.get("/api/download", async (req, res) => {
           format: "bestaudio/best",
           noCheckCertificate: true,
           noWarnings: true,
+          noPlaylist: true,
+          extractorArgs: YT_EXTRACTOR_ARGS,
+          userAgent: YT_UA,
         });
       } else {
         await ytDlp(url, {
@@ -228,6 +250,9 @@ app.get("/api/download", async (req, res) => {
           format: "best[height<=480][ext=mp4]/best[height<=720][ext=mp4]/best",
           noCheckCertificate: true,
           noWarnings: true,
+          noPlaylist: true,
+          extractorArgs: YT_EXTRACTOR_ARGS,
+          userAgent: YT_UA,
         });
       }
       console.log(`Finished download for ${mediaType}: ${urlHash}`);
@@ -255,7 +280,7 @@ app.get("/api/download", async (req, res) => {
     });
 
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = formatYtDlpError(err);
     console.error("Download endpoint error:", msg);
     return res.status(500).json({ error: msg });
   }
