@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: sekmusic-media-server
+    env: node
+    rootDir: media-server
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: "18"
+      - key: MEDIA_SERVER_BASE_URL
+        sync: false

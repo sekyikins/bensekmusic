@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import ytDlp from "yt-dlp-exec";
 
+export const maxDuration = 30;
+
 interface YtDlpFormat {
   url?: string;
   vcodec?: string;

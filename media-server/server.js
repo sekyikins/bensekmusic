@@ -3,6 +3,7 @@ import cors from "cors";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
+import { Readable } from "node:stream";
 import ytDlp from "yt-dlp-exec";
 import crypto from "crypto";
 
@@ -11,6 +12,7 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const BASE_URL = process.env.MEDIA_SERVER_BASE_URL || `http://localhost:${PORT}`;
 
 app.use(cors());
 
@@ -29,9 +31,23 @@ app.use("/downloads", express.static(DOWNLOADS_DIR, {
 // Map to track ongoing downloads to prevent duplicate parallel downloads
 const activeDownloads = new Map();
 
-// Helper to find fully completed files matching the hash (ignoring .part, .ytdl, and split download components)
+// In-memory cache for extracted format URLs (avoids re-running yt-dlp on every range request)
+const formatCache = new Map();
+const FORMAT_CACHE_TTL = 5 * 60 * 60 * 1000; // 5 hours (YouTube CDN URLs last ~6 hours)
+
+function getCachedFormatUrl(key) {
+  const entry = formatCache.get(key);
+  if (entry && Date.now() < entry.expiry) return entry.url;
+  formatCache.delete(key);
+  return null;
+}
+
+function setCachedFormatUrl(key, url) {
+  formatCache.set(key, { url, expiry: Date.now() + FORMAT_CACHE_TTL });
+}
+
+// Helper to find fully completed files matching the hash
 function findCompletedFile(files, hash) {
-  // First, look for a completed file that matches the hash, has only one dot (clean extension like hash.mp4, hash.webm), and is not a part/temp file
   const completedClean = files.find((f) => {
     if (!f.startsWith(hash)) return false;
     if (f.endsWith(".part") || f.endsWith(".ytdl")) return false;
@@ -42,47 +58,141 @@ function findCompletedFile(files, hash) {
 
   if (completedClean) return completedClean;
 
-  // Fallback to any completed file matching the hash that is not a part/temp file
   return files.find((f) => f.startsWith(hash) && !f.endsWith(".part") && !f.endsWith(".ytdl"));
 }
 
-// Media check and download trigger endpoint
+// Streaming endpoint — extracts format URL via yt-dlp and proxies the stream.
+// Used by the Next.js frontend for both playback (dl omitted) and downloads (dl=1).
+// Format URLs are cached per video+type for 5 hours to avoid re-running yt-dlp on range requests.
+app.get("/api/stream", async (req, res) => {
+  const { url: targetUrl, type = "audio", filename: filenameParam, dl } = req.query;
+
+  if (!targetUrl) {
+    return res.status(400).json({ error: "Missing video URL" });
+  }
+
+  try {
+    const cacheKey = `${targetUrl}:${type}`;
+    let directUrl = getCachedFormatUrl(cacheKey);
+
+    if (!directUrl) {
+      const info = await ytDlp(targetUrl, {
+        dumpSingleJson: true,
+        noCheckCertificate: true,
+        noWarnings: true,
+      });
+
+      if (!info || !Array.isArray(info.formats)) {
+        throw new Error("Could not retrieve media format info.");
+      }
+
+      let format;
+      if (type === "video") {
+        const videoFormats = info.formats.filter(
+          (f) => f.vcodec !== "none" && f.acodec !== "none" && f.url
+        );
+        if (videoFormats.length > 0) {
+          format = videoFormats.reduce(
+            (best, f) => (!best || (f.height || 0) > (best.height || 0) ? f : best),
+            null
+          );
+        }
+      } else {
+        const audioFormats = info.formats.filter(
+          (f) => f.vcodec === "none" && f.acodec !== "none" && f.url
+        );
+        if (audioFormats.length > 0) {
+          format = audioFormats.reduce(
+            (best, f) => (!best || (f.abr || 0) > (best.abr || 0) ? f : best),
+            null
+          );
+        }
+      }
+
+      if (!format && info.formats.length > 0) {
+        format = info.formats.find((f) => f.url);
+      }
+
+      directUrl = format?.url;
+      if (!directUrl) throw new Error("Could not extract direct stream URL.");
+
+      setCachedFormatUrl(cacheKey, directUrl);
+    }
+
+    const proxyHeaders = {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    };
+    if (req.headers.range) proxyHeaders["range"] = req.headers.range;
+
+    const upstream = await fetch(directUrl, { headers: proxyHeaders });
+
+    if (!upstream.ok && upstream.status !== 206) {
+      // If upstream rejected (e.g. URL expired), clear cache and fail
+      formatCache.delete(`${targetUrl}:${type}`);
+      throw new Error(`Upstream returned ${upstream.status}. Try again.`);
+    }
+
+    const contentType = type === "video" ? "video/mp4" : "audio/mp4";
+    const ext = type === "video" ? "mp4" : "m4a";
+    const baseFilename = filenameParam || "sekmusic-dl";
+    const encodedFilename = encodeURIComponent(`${baseFilename}.${ext}`);
+    const dispositionType = dl === "1" ? "attachment" : "inline";
+
+    res.status(upstream.status);
+    res.set("Content-Type", contentType);
+    res.set("Content-Disposition", `${dispositionType}; filename*=UTF-8''${encodedFilename}`);
+    res.set("Accept-Ranges", "bytes");
+    res.set("Cache-Control", "no-cache");
+
+    const contentLength = upstream.headers.get("content-length");
+    const contentRange = upstream.headers.get("content-range");
+    if (contentLength) res.set("Content-Length", contentLength);
+    if (contentRange) res.set("Content-Range", contentRange);
+
+    const nodeStream = Readable.fromWeb(upstream.body);
+    nodeStream.pipe(res);
+    req.on("close", () => nodeStream.destroy());
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("Stream error:", msg);
+    if (!res.headersSent) res.status(500).json({ error: msg });
+  }
+});
+
+// Media check and download trigger endpoint (caches file to disk)
 app.get("/api/download", async (req, res) => {
   try {
     const url = req.query.url;
     const type = req.query.type;
-    
+
     if (!url) {
       return res.status(400).json({ error: "Missing video URL" });
     }
 
     const mediaType = type === "video" ? "video" : "audio";
-    
-    // Hash the URL + media type to create a unique identifier
+
     const urlHash = crypto.createHash("md5").update(url + mediaType).digest("hex");
 
-    // Check if the file is already downloaded (any extension matching the hash)
     const files = fs.readdirSync(DOWNLOADS_DIR);
     const existingFile = findCompletedFile(files, urlHash);
-    
+
     if (existingFile) {
       return res.json({
-        url: `http://localhost:${PORT}/downloads/${existingFile}`,
+        url: `${BASE_URL}/downloads/${existingFile}`,
         status: "cached",
         filename: existingFile
       });
     }
 
-    // Check if this file is currently being downloaded by another request
     if (activeDownloads.has(urlHash)) {
       console.log(`Waiting for ongoing download of: ${urlHash}`);
       await activeDownloads.get(urlHash);
-      
+
       const updatedFiles = fs.readdirSync(DOWNLOADS_DIR);
       const finishedFile = findCompletedFile(updatedFiles, urlHash);
       if (finishedFile) {
         return res.json({
-          url: `http://localhost:${PORT}/downloads/${finishedFile}`,
+          url: `${BASE_URL}/downloads/${finishedFile}`,
           status: "downloaded",
           filename: finishedFile
         });
@@ -90,9 +200,8 @@ app.get("/api/download", async (req, res) => {
       throw new Error("Download completed but file could not be found.");
     }
 
-    // Start a new download and store the promise in the map
     const outputTemplate = path.join(DOWNLOADS_DIR, `${urlHash}.%(ext)s`);
-    
+
     const downloadPromise = (async () => {
       console.log(`Starting download for ${mediaType}: ${url}`);
       if (mediaType === "audio") {
@@ -121,16 +230,15 @@ app.get("/api/download", async (req, res) => {
       activeDownloads.delete(urlHash);
     }
 
-    // Find the downloaded file to return its actual extension/name
     const updatedFiles = fs.readdirSync(DOWNLOADS_DIR);
     const downloadedFile = findCompletedFile(updatedFiles, urlHash);
-    
+
     if (!downloadedFile) {
       throw new Error("File not found on disk after download completion.");
     }
 
     return res.json({
-      url: `http://localhost:${PORT}/downloads/${downloadedFile}`,
+      url: `${BASE_URL}/downloads/${downloadedFile}`,
       status: "downloaded",
       filename: downloadedFile
     });
@@ -142,7 +250,7 @@ app.get("/api/download", async (req, res) => {
   }
 });
 
-// Endpoint to status check or trigger download asynchronously
+// Status check endpoint
 app.get("/api/status", (req, res) => {
   const url = req.query.url;
   const type = req.query.type;
@@ -154,9 +262,9 @@ app.get("/api/status", (req, res) => {
 
   const files = fs.readdirSync(DOWNLOADS_DIR);
   const existingFile = findCompletedFile(files, urlHash);
-  
+
   if (existingFile) {
-    return res.json({ status: "ready", url: `http://localhost:${PORT}/downloads/${existingFile}` });
+    return res.json({ status: "ready", url: `${BASE_URL}/downloads/${existingFile}` });
   } else if (activeDownloads.has(urlHash)) {
     return res.json({ status: "downloading" });
   } else {
@@ -169,20 +277,20 @@ app.get("/health", (req, res) => {
   res.json({ status: "ok" });
 });
 
-// Periodic cleanup: delete files older than 2 hours to manage space
-const CLEANUP_INTERVAL = 30 * 60 * 1000; // 30 minutes
-const MAX_FILE_AGE = 2 * 60 * 60 * 1000; // 2 hours
+// Periodic cleanup: delete files older than 2 hours
+const CLEANUP_INTERVAL = 30 * 60 * 1000;
+const MAX_FILE_AGE = 2 * 60 * 60 * 1000;
 
 setInterval(() => {
   try {
     const files = fs.readdirSync(DOWNLOADS_DIR);
     const now = Date.now();
-    
+
     files.forEach((file) => {
       const filePath = path.join(DOWNLOADS_DIR, file);
       const stats = fs.statSync(filePath);
       const age = now - stats.mtimeMs;
-      
+
       if (age > MAX_FILE_AGE) {
         fs.unlinkSync(filePath);
         console.log(`Cleaned up old cached file: ${file}`);
@@ -194,5 +302,5 @@ setInterval(() => {
 }, CLEANUP_INTERVAL);
 
 app.listen(PORT, () => {
-  console.log(`Media engine running on http://localhost:${PORT}`);
+  console.log(`Media engine running on ${BASE_URL}`);
 });
