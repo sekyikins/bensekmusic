@@ -8,12 +8,10 @@ import { fileURLToPath } from "url";
 import ytDlp from "yt-dlp-exec";
 import crypto from "crypto";
 
-// Player-client chain for datacenter IPs (Render). `android_vr` and `tv_embedded`
-// both survive YouTube's bot check without PO tokens AND return usable format URLs;
-// the older `tv`/`ios`/`web` clients now fail with "Requested format is not available"
-// because YouTube requires PO tokens for them. `web` is kept last as a fallback for
-// non-YouTube sources and is harmlessly skipped when bot-checked.
-const YT_EXTRACTOR_ARGS = "youtube:player_client=android_vr,tv_embedded,web";
+// Player-client chain. On a datacenter IP (Render) YouTube blocks the clients
+// that return usable formats unless requests are authenticated, so cookies
+// (below) are required there. With cookies present, these clients work fine.
+const YT_EXTRACTOR_ARGS = "youtube:player_client=default,android_vr,tv_embedded,web";
 const YT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -22,6 +20,43 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3001;
 const BASE_URL = process.env.MEDIA_SERVER_BASE_URL || `http://localhost:${PORT}`;
+
+// YouTube bot-check bypass: datacenter IPs (Render) get "Sign in to confirm
+// you're not a bot" unless yt-dlp is given authenticated cookies. Provide them
+// via env var — base64 is preferred because it survives Render's env-var UI
+// without mangling the TABs that Netscape cookies.txt requires.
+//   YT_COOKIES_B64 — base64 of a cookies.txt export (recommended), OR
+//   YT_COOKIES     — raw cookies.txt contents.
+const COOKIES_FILE = path.join(__dirname, "yt-cookies.txt");
+let HAS_COOKIES = false;
+try {
+  const raw = process.env.YT_COOKIES_B64
+    ? Buffer.from(process.env.YT_COOKIES_B64, "base64").toString("utf8")
+    : process.env.YT_COOKIES;
+  if (raw && raw.trim()) {
+    fs.writeFileSync(COOKIES_FILE, raw, "utf8");
+    HAS_COOKIES = true;
+    console.log(`Loaded YouTube cookies (${raw.split("\n").length} lines).`);
+  } else {
+    console.warn("No YT_COOKIES/YT_COOKIES_B64 set — YouTube may block this IP with a bot check.");
+  }
+} catch (e) {
+  console.error("Failed to load YouTube cookies:", e.message);
+}
+
+// Shared yt-dlp options, with cookies attached when available.
+function ytDlpOpts(extra = {}) {
+  const opts = {
+    noCheckCertificate: true,
+    noWarnings: true,
+    noPlaylist: true,
+    extractorArgs: YT_EXTRACTOR_ARGS,
+    userAgent: YT_UA,
+    ...extra,
+  };
+  if (HAS_COOKIES) opts.cookies = COOKIES_FILE;
+  return opts;
+}
 
 app.use(cors());
 
@@ -113,14 +148,7 @@ app.get("/api/stream", async (req, res) => {
     let cached = getCachedFormat(cacheKey);
 
     if (!cached) {
-      const info = await ytDlp(targetUrl, {
-        dumpSingleJson: true,
-        noCheckCertificate: true,
-        noWarnings: true,
-        noPlaylist: true,
-        extractorArgs: YT_EXTRACTOR_ARGS,
-        userAgent: YT_UA,
-      });
+      const info = await ytDlp(targetUrl, ytDlpOpts({ dumpSingleJson: true }));
 
       if (!info || !Array.isArray(info.formats)) {
         throw new Error("Could not retrieve media format info.");
@@ -239,25 +267,15 @@ app.get("/api/download", async (req, res) => {
     const downloadPromise = (async () => {
       console.log(`Starting download for ${mediaType}: ${url}`);
       if (mediaType === "audio") {
-        await ytDlp(url, {
+        await ytDlp(url, ytDlpOpts({
           output: outputTemplate,
-          format: "bestaudio/best",
-          noCheckCertificate: true,
-          noWarnings: true,
-          noPlaylist: true,
-          extractorArgs: YT_EXTRACTOR_ARGS,
-          userAgent: YT_UA,
-        });
+          format: "bestaudio[ext=m4a]/bestaudio/best",
+        }));
       } else {
-        await ytDlp(url, {
+        await ytDlp(url, ytDlpOpts({
           output: outputTemplate,
           format: "best[height<=480][ext=mp4]/best[height<=720][ext=mp4]/best",
-          noCheckCertificate: true,
-          noWarnings: true,
-          noPlaylist: true,
-          extractorArgs: YT_EXTRACTOR_ARGS,
-          userAgent: YT_UA,
-        });
+        }));
       }
       console.log(`Finished download for ${mediaType}: ${urlHash}`);
     })();
