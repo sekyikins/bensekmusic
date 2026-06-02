@@ -8,9 +8,12 @@ import { fileURLToPath } from "url";
 import ytDlp from "yt-dlp-exec";
 import crypto from "crypto";
 
-// Player-client chain that bypasses YouTube's bot check on datacenter IPs.
-// `tv` and `ios` rarely trigger the check; `web` is the fallback for non-YT sources.
-const YT_EXTRACTOR_ARGS = "youtube:player_client=tv,ios,web";
+// Player-client chain for datacenter IPs (Render). `android_vr` and `tv_embedded`
+// both survive YouTube's bot check without PO tokens AND return usable format URLs;
+// the older `tv`/`ios`/`web` clients now fail with "Requested format is not available"
+// because YouTube requires PO tokens for them. `web` is kept last as a fallback for
+// non-YouTube sources and is harmlessly skipped when bot-checked.
+const YT_EXTRACTOR_ARGS = "youtube:player_client=android_vr,tv_embedded,web";
 const YT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 const __filename = fileURLToPath(import.meta.url);
