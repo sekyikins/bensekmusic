@@ -44,15 +44,42 @@ const activeDownloads = new Map();
 const formatCache = new Map();
 const FORMAT_CACHE_TTL = 5 * 60 * 60 * 1000; // 5 hours (YouTube CDN URLs last ~6 hours)
 
-function getCachedFormatUrl(key) {
+function getCachedFormat(key) {
   const entry = formatCache.get(key);
-  if (entry && Date.now() < entry.expiry) return entry.url;
+  if (entry && Date.now() < entry.expiry) return entry;
   formatCache.delete(key);
   return null;
 }
 
-function setCachedFormatUrl(key, url) {
-  formatCache.set(key, { url, expiry: Date.now() + FORMAT_CACHE_TTL });
+function setCachedFormat(key, data) {
+  formatCache.set(key, { ...data, expiry: Date.now() + FORMAT_CACHE_TTL });
+}
+
+// Pick a browser-playable format and report its true container so the
+// Content-Type we send matches the bytes. Audio: prefer AAC/m4a (plays
+// everywhere incl. Safari/iOS) over Opus/WebM; otherwise the browser
+// rejects Opus bytes labeled audio/mp4 with NotSupportedError.
+function selectFormat(formats, type) {
+  let format;
+  if (type === "video") {
+    const progressive = formats.filter((f) => f.vcodec !== "none" && f.acodec !== "none" && f.url);
+    const mp4 = progressive.filter((f) => f.ext === "mp4" || (f.vcodec || "").startsWith("avc1"));
+    const pool = mp4.length > 0 ? mp4 : progressive;
+    format = pool.reduce((best, f) => (!best || (f.height || 0) > (best.height || 0) ? f : best), null);
+  } else {
+    const audio = formats.filter((f) => f.vcodec === "none" && f.acodec !== "none" && f.url);
+    const aac = audio.filter((f) => f.ext === "m4a" || (f.acodec || "").startsWith("mp4a"));
+    const pool = aac.length > 0 ? aac : audio;
+    format = pool.reduce((best, f) => (!best || (f.abr || 0) > (best.abr || 0) ? f : best), null);
+  }
+  if (!format) format = formats.find((f) => f.url);
+  if (!format) return null;
+
+  const isWebm = format.ext === "webm" || (format.acodec || "").includes("opus") || (format.vcodec || "").includes("vp");
+  if (type === "video") {
+    return { url: format.url, contentType: isWebm ? "video/webm" : "video/mp4", ext: isWebm ? "webm" : "mp4" };
+  }
+  return { url: format.url, contentType: isWebm ? "audio/webm" : "audio/mp4", ext: isWebm ? "webm" : "m4a" };
 }
 
 // Helper to find fully completed files matching the hash
@@ -83,9 +110,9 @@ app.get("/api/stream", async (req, res) => {
   const cacheKey = `${targetUrl}:${type}`;
 
   try {
-    let directUrl = getCachedFormatUrl(cacheKey);
+    let cached = getCachedFormat(cacheKey);
 
-    if (!directUrl) {
+    if (!cached) {
       const info = await ytDlp(targetUrl, {
         dumpSingleJson: true,
         noCheckCertificate: true,
@@ -99,41 +126,15 @@ app.get("/api/stream", async (req, res) => {
         throw new Error("Could not retrieve media format info.");
       }
 
-      let format;
-      if (type === "video") {
-        const videoFormats = info.formats.filter(
-          (f) => f.vcodec !== "none" && f.acodec !== "none" && f.url
-        );
-        if (videoFormats.length > 0) {
-          format = videoFormats.reduce(
-            (best, f) => (!best || (f.height || 0) > (best.height || 0) ? f : best),
-            null
-          );
-        }
-      } else {
-        const audioFormats = info.formats.filter(
-          (f) => f.vcodec === "none" && f.acodec !== "none" && f.url
-        );
-        if (audioFormats.length > 0) {
-          format = audioFormats.reduce(
-            (best, f) => (!best || (f.abr || 0) > (best.abr || 0) ? f : best),
-            null
-          );
-        }
-      }
+      cached = selectFormat(info.formats, type);
+      if (!cached || !cached.url) throw new Error("Could not extract direct stream URL.");
 
-      if (!format && info.formats.length > 0) {
-        format = info.formats.find((f) => f.url);
-      }
-
-      directUrl = format?.url;
-      if (!directUrl) throw new Error("Could not extract direct stream URL.");
-
-      setCachedFormatUrl(cacheKey, directUrl);
+      setCachedFormat(cacheKey, cached);
     }
 
-    const contentType = type === "video" ? "video/mp4" : "audio/mp4";
-    const ext = type === "video" ? "mp4" : "m4a";
+    const directUrl = cached.url;
+    const contentType = cached.contentType;
+    const ext = cached.ext;
     const baseFilename = filenameParam || "sekmusic-dl";
     const encodedFilename = encodeURIComponent(`${baseFilename}.${ext}`);
     const dispositionType = dl === "1" ? "attachment" : "inline";

@@ -6,6 +6,7 @@ export const maxDuration = 30;
 
 interface YtDlpFormat {
   url?: string;
+  ext?: string;
   vcodec?: string;
   acodec?: string;
   height?: number | null;
@@ -48,27 +49,26 @@ export async function GET(req: NextRequest) {
       throw new Error("Could not retrieve media format info.");
     }
 
+    // Prefer browser-playable formats: AAC/m4a for audio (plays everywhere,
+    // incl. Safari/iOS) over Opus/WebM, and mp4/H.264 for video. Otherwise the
+    // browser rejects Opus bytes labeled audio/mp4 with NotSupportedError.
     let format: YtDlpFormat | undefined;
     if (type === "video") {
-      const videoFormats = info.formats.filter((f) => f.vcodec !== 'none' && f.acodec !== 'none' && f.url);
-      if (videoFormats.length > 0) {
-        format = videoFormats.reduce<YtDlpFormat | null>((best, f) => {
-          if (!best) return f;
-          const bestHeight = best.height || 0;
-          const currentHeight = f.height || 0;
-          return currentHeight > bestHeight ? f : best;
-        }, null) || undefined;
-      }
+      const progressive = info.formats.filter((f) => f.vcodec !== 'none' && f.acodec !== 'none' && f.url);
+      const mp4 = progressive.filter((f) => f.ext === 'mp4' || (f.vcodec || '').startsWith('avc1'));
+      const pool = mp4.length > 0 ? mp4 : progressive;
+      format = pool.reduce<YtDlpFormat | null>((best, f) => {
+        if (!best) return f;
+        return (f.height || 0) > (best.height || 0) ? f : best;
+      }, null) || undefined;
     } else {
       const audioFormats = info.formats.filter((f) => f.vcodec === 'none' && f.acodec !== 'none' && f.url);
-      if (audioFormats.length > 0) {
-        format = audioFormats.reduce<YtDlpFormat | null>((best, f) => {
-          if (!best) return f;
-          const bestBitrate = best.abr || 0;
-          const currentBitrate = f.abr || 0;
-          return currentBitrate > bestBitrate ? f : best;
-        }, null) || undefined;
-      }
+      const aac = audioFormats.filter((f) => f.ext === 'm4a' || (f.acodec || '').startsWith('mp4a'));
+      const pool = aac.length > 0 ? aac : audioFormats;
+      format = pool.reduce<YtDlpFormat | null>((best, f) => {
+        if (!best) return f;
+        return (f.abr || 0) > (best.abr || 0) ? f : best;
+      }, null) || undefined;
     }
 
     if (!format && info.formats.length > 0) {
@@ -79,6 +79,8 @@ export async function GET(req: NextRequest) {
     if (!directUrl) {
       throw new Error("Could not extract direct stream URL.");
     }
+
+    const isWebm = format?.ext === 'webm' || (format?.acodec || '').includes('opus') || (format?.vcodec || '').includes('vp');
 
     const proxyHeaders = new Headers();
     const range = req.headers.get("range");
@@ -102,8 +104,10 @@ export async function GET(req: NextRequest) {
       }
     });
 
-    const contentType = type === "video" ? "video/mp4" : "audio/mp4";
-    const ext = type === "video" ? "mp4" : "m4a";
+    const contentType = type === "video"
+      ? (isWebm ? "video/webm" : "video/mp4")
+      : (isWebm ? "audio/webm" : "audio/mp4");
+    const ext = type === "video" ? (isWebm ? "webm" : "mp4") : (isWebm ? "webm" : "m4a");
 
     resHeaders.set("Content-Type", contentType);
 
