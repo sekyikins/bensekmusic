@@ -308,6 +308,17 @@ app.get("/api/status", (req, res) => {
   }
 });
 
+// Root route — this server is an API only (the app frontend lives on Vercel).
+// Without this, the root URL returns Express's bare "Cannot GET /", which looks broken.
+app.get("/", (req, res) => {
+  res.json({
+    service: "sekmusic-media-server",
+    status: "ok",
+    message: "Media API server is running. The app frontend is hosted separately.",
+    endpoints: ["/api/stream", "/api/download", "/api/status", "/health"],
+  });
+});
+
 // Health check endpoint
 app.get("/health", (req, res) => {
   res.json({ status: "ok" });
