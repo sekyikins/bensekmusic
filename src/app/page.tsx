@@ -903,7 +903,7 @@ export default function Home() {
                         exit={{ opacity: 0, height: 0 }}
                         transition={{ duration: 0.3, ease: "easeInOut" }}
                         className="overflow-hidden mb-8"
-                      >                        <div ref={lyricsContainerRef} className="bg-black/40 border border-white/5 rounded-3xl p-6 sm:p-8 backdrop-blur-md relative overflow-hidden max-h-[400px] flex flex-col gap-4">
+                      >                        <div ref={lyricsContainerRef} className="bg-black/40 border border-white/5 rounded-3xl p-6 sm:p-8 backdrop-blur-md relative overflow-hidden max-h-100 flex flex-col gap-4">
                           {/* Copy toolbar */}
                           {!lyricsLoading && (lyrics || syncedLyrics) && (
                             <div className="flex items-center justify-end gap-2 mb-1 sticky top-0 z-25" ref={dropdownRef}>
