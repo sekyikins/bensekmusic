@@ -5,12 +5,16 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 import ytDlp from "yt-dlp-exec";
 import crypto from "crypto";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 
 app.use(cors());
 
@@ -67,7 +71,7 @@ app.get("/api/download", async (req, res) => {
     
     if (existingFile) {
       return res.json({
-        url: `http://localhost:${PORT}/downloads/${existingFile}`,
+        url: `${BASE_URL}/downloads/${existingFile}`,
         status: "cached",
         filename: existingFile
       });
@@ -82,7 +86,7 @@ app.get("/api/download", async (req, res) => {
       const finishedFile = findCompletedFile(updatedFiles, urlHash);
       if (finishedFile) {
         return res.json({
-          url: `http://localhost:${PORT}/downloads/${finishedFile}`,
+          url: `${BASE_URL}/downloads/${finishedFile}`,
           status: "downloaded",
           filename: finishedFile
         });
@@ -156,7 +160,7 @@ app.get("/api/status", (req, res) => {
   const existingFile = findCompletedFile(files, urlHash);
   
   if (existingFile) {
-    return res.json({ status: "ready", url: `http://localhost:${PORT}/downloads/${existingFile}` });
+    return res.json({ status: "ready", url: `${BASE_URL}/downloads/${existingFile}` });
   } else if (activeDownloads.has(urlHash)) {
     return res.json({ status: "downloading" });
   } else {

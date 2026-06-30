@@ -39,3 +39,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Download tools
+media-server/bin/
+media-server/node_modules
+media-server/downloads

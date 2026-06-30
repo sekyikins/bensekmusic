@@ -1,17 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import ytDlp from "yt-dlp-exec";
 
-interface YtDlpFormat {
-  url?: string;
-  vcodec?: string;
-  acodec?: string;
-  height?: number | null;
-  abr?: number | null;
-}
+export const dynamic = 'force-dynamic';
 
-interface YtDlpInfo {
-  formats?: YtDlpFormat[];
-}
+// Base URL for media server from environment variables
+const MEDIA_SERVER_URL = process.env.NEXT_PUBLIC_MEDIA_SERVER_URL || "http://localhost:3001";
 
 export async function GET(req: NextRequest) {
   try {
@@ -25,96 +17,65 @@ export async function GET(req: NextRequest) {
       return new NextResponse("Missing video URL", { status: 400 });
     }
 
-    // 1. Get the streaming formats from yt-dlp
-    const info = (await ytDlp(targetUrl, {
-      dumpSingleJson: true,
-      noCheckCertificate: true,
-      noWarnings: true,
-    })) as unknown as YtDlpInfo;
+    // First request to media server to get download URL
+    const mediaServerRes = await fetch(`${MEDIA_SERVER_URL}/api/download?url=${encodeURIComponent(targetUrl)}&type=${type}`);
 
-    if (!info || !Array.isArray(info.formats)) {
-      throw new Error("Could not retrieve media format info.");
+    if (!mediaServerRes.ok) {
+      const errData = await mediaServerRes.json().catch(() => ({ error: "Media server error" }));
+      return NextResponse.json(
+        errData,
+        { status: mediaServerRes.status }
+      );
     }
-    
-    let format: YtDlpFormat | undefined;
-    if (type === "video") {
-      // Find the highest resolution format that has both video and audio
-      const videoFormats = info.formats.filter((f) => f.vcodec !== 'none' && f.acodec !== 'none' && f.url);
-      if (videoFormats.length > 0) {
-        format = videoFormats.reduce<YtDlpFormat | null>((best, f) => {
-          if (!best) return f;
-          const bestHeight = best.height || 0;
-          const currentHeight = f.height || 0;
-          return currentHeight > bestHeight ? f : best;
-        }, null) || undefined;
+
+    const data = await mediaServerRes.json();
+    // Now, proxy or redirect to the media server's download URL
+    if (data.url) {
+      // Build the media file URL
+      const mediaFileUrl = data.url;
+      const ext = type === "video" ? "mp4" : "m4a";
+      const baseFilename = filenameParam || `sekmusic-dl`;
+      const encodedFilename = encodeURIComponent(`${baseFilename}.${ext}`);
+      const dispositionType = isDownload ? "attachment" : "inline";
+
+      // Now proxy the request from the media server's static file
+      const range = req.headers.get("range");
+      const proxyHeaders = new Headers();
+      if (range) {
+        proxyHeaders.set("range", range);
       }
+      
+      proxyHeaders.set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+
+      const mediaFileRes = await fetch(mediaFileUrl, {
+        headers: proxyHeaders,
+        signal: req.signal,
+      });
+
+      if (!mediaFileRes.ok && mediaFileRes.status !== 206) {
+        throw new Error(`Failed to fetch media file. Status: ${mediaFileRes.status}`);
+      }
+
+      // Forward all relevant headers
+      const resHeaders = new Headers();
+      
+      ["content-length", "content-range", "accept-ranges", "content-type"].forEach(header => {
+        if (mediaFileRes.headers.has(header)) {
+          resHeaders.set(header, mediaFileRes.headers.get(header)!);
+        }
+      });
+      
+      // Override content disposition for download/inline
+      resHeaders.set("Content-Disposition", `${dispositionType}; filename*=UTF-8''${encodedFilename}`);
+
+      return new NextResponse(mediaFileRes.body, {
+        status: mediaFileRes.status,
+        statusText: mediaFileRes.statusText,
+        headers: resHeaders,
+      });
     } else {
-      // Find highest quality audio only format
-      const audioFormats = info.formats.filter((f) => f.vcodec === 'none' && f.acodec !== 'none' && f.url);
-      if (audioFormats.length > 0) {
-        format = audioFormats.reduce<YtDlpFormat | null>((best, f) => {
-          if (!best) return f;
-          const bestBitrate = best.abr || 0;
-          const currentBitrate = f.abr || 0;
-          return currentBitrate > bestBitrate ? f : best;
-        }, null) || undefined;
-      }
+      throw new Error("Media server did not return a valid file URL");
     }
-
-    if (!format && info.formats.length > 0) {
-      // Fallback: just find any format that has a url
-      format = info.formats.find((f) => f.url);
-    }
-
-    const directUrl = format?.url;
-
-    if (!directUrl) {
-      throw new Error("Could not extract direct stream URL.");
-    }
-
-    // 2. Proxy the request to the direct URL, forwarding Range headers
-    const proxyHeaders = new Headers();
-    const range = req.headers.get("range");
-    if (range) {
-      proxyHeaders.set("range", range);
-    }
-    
-    proxyHeaders.set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-
-    const response = await fetch(directUrl, {
-      headers: proxyHeaders,
-      signal: req.signal,
-    });
-
-    if (!response.ok && response.status !== 206) {
-      throw new Error(`Failed to fetch media stream. Status: ${response.status}`);
-    }
-
-    // 3. Forward the response headers back to the client
-    const resHeaders = new Headers();
-    
-    ["content-length", "content-range", "accept-ranges", "content-type"].forEach(header => {
-      if (response.headers.has(header)) {
-        resHeaders.set(header, response.headers.get(header)!);
-      }
-    });
-
-    const contentType = type === "video" ? "video/mp4" : "audio/mp4";
-    const ext = type === "video" ? "mp4" : "m4a";
-
-    resHeaders.set("Content-Type", contentType);
-
-    const baseFilename = filenameParam || `sekmusic-dl`;
-    const encodedFilename = encodeURIComponent(`${baseFilename}.${ext}`);
-    const dispositionType = isDownload ? "attachment" : "inline";
-    
-    resHeaders.set("Content-Disposition", `${dispositionType}; filename*=UTF-8''${encodedFilename}`);
-
-    return new NextResponse(response.body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: resHeaders,
-    });
 
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);

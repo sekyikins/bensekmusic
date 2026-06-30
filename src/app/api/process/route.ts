@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import ytDlp from "yt-dlp-exec";
 
+export const dynamic = 'force-dynamic';
+
 interface YtDlpFormat {
   url?: string;
   vcodec?: string;
