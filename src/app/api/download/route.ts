@@ -5,6 +5,13 @@ export const dynamic = 'force-dynamic';
 // Base URL for media server from environment variables
 const MEDIA_SERVER_URL = process.env.NEXT_PUBLIC_MEDIA_SERVER_URL || "http://localhost:3001";
 
+const MEDIA_SERVER_TIMEOUT_MS = 20_000;
+
+function buildSignal(clientSignal: AbortSignal | null) {
+  const timeout = AbortSignal.timeout(MEDIA_SERVER_TIMEOUT_MS);
+  return clientSignal ? AbortSignal.any([clientSignal, timeout]) : timeout;
+}
+
 export async function GET(req: NextRequest) {
   try {
     const url = new URL(req.url);
@@ -18,7 +25,10 @@ export async function GET(req: NextRequest) {
     }
 
     // First request to media server to get download URL
-    const mediaServerRes = await fetch(`${MEDIA_SERVER_URL}/api/download?url=${encodeURIComponent(targetUrl)}&type=${type}`);
+    const mediaServerRes = await fetch(
+      `${MEDIA_SERVER_URL}/api/download?url=${encodeURIComponent(targetUrl)}&type=${type}`,
+      { signal: buildSignal(req.signal) }
+    );
 
     if (!mediaServerRes.ok) {
       const errData = await mediaServerRes.json().catch(() => ({ error: "Media server error" }));
@@ -29,12 +39,25 @@ export async function GET(req: NextRequest) {
     }
 
     const data = await mediaServerRes.json();
+
+    // The client should only request this once /api/prepare reports "ready".
+    // If it isn't ready yet, tell the client to retry rather than erroring.
+    if (!data.url) {
+      return new NextResponse("Media is still being prepared", { status: 425 });
+    }
+
     // Now, proxy or redirect to the media server's download URL
     if (data.url) {
       // Build the media file URL
       const mediaFileUrl = data.url;
-      const ext = type === "video" ? "mp4" : "m4a";
-      const baseFilename = filenameParam || `sekmusic-dl`;
+      const actualFilename = data.filename
+        ? data.filename.split(/[\\/]/).pop()!
+        : "";
+
+      const ext = actualFilename.includes(".")
+        ? actualFilename.split(".").pop()!
+        : type === "video" ? "mp4" : "m4a";
+      const baseFilename = filenameParam || "sekmusic-dl";
       const encodedFilename = encodeURIComponent(`${baseFilename}.${ext}`);
       const dispositionType = isDownload ? "attachment" : "inline";
 
@@ -79,6 +102,11 @@ export async function GET(req: NextRequest) {
 
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
+
+    if (error instanceof Error && error.name === "AbortError") {
+      return new NextResponse("Request aborted", { status: 499 });
+    }
+
     console.error("Download error:", errorMessage);
     return new NextResponse(`Download error: ${errorMessage}`, { status: 500 });
   }

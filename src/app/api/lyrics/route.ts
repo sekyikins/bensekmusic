@@ -57,26 +57,50 @@ interface LrclibSearchResult {
   syncedLyrics?: string | null;
 }
 
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function searchLrclib(query: string): Promise<LrclibSearchResult[]> {
   const lrclibUrl = `https://lrclib.net/api/search?q=${encodeURIComponent(query)}`;
-  try {
-    const res = await fetch(lrclibUrl, {
-      headers: {
-        "User-Agent": "SekMusic/1.0 (https://github.com/sekyikins/bensekmusic)"
-      }
-    });
+  const maxAttempts = 3;
 
-    if (!res.ok) {
-      console.warn(`LRCLIB search warning: ${res.statusText} for query: ${query}`);
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await fetch(lrclibUrl, {
+        headers: {
+          "User-Agent": "SekMusic/1.0 (https://github.com/sekyikins/bensekmusic)"
+        },
+        signal: AbortSignal.timeout(8000),
+      });
+
+      // LRCLIB is community-run and occasionally returns 503 "ServerOverloaded"
+      // or 429. Back off briefly and retry instead of treating it as "no lyrics".
+      if (res.status === 503 || res.status === 429) {
+        if (attempt < maxAttempts) {
+          await delay(400 * attempt);
+          continue;
+        }
+        console.warn(`LRCLIB busy (${res.status}) after ${maxAttempts} attempts for query: ${query}`);
+        return [];
+      }
+
+      if (!res.ok) {
+        console.warn(`LRCLIB search warning: ${res.statusText} for query: ${query}`);
+        return [];
+      }
+
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    } catch (err) {
+      if (attempt < maxAttempts) {
+        await delay(400 * attempt);
+        continue;
+      }
+      console.error(`LRCLIB search error for query: ${query}`, err);
       return [];
     }
-
-    const data = await res.json();
-    return Array.isArray(data) ? data : [];
-  } catch (err) {
-    console.error(`LRCLIB search error for query: ${query}`, err);
-    return [];
   }
+
+  return [];
 }
 
 export async function GET(req: NextRequest) {

@@ -3,6 +3,28 @@ import ytDlp from "yt-dlp-exec";
 
 export const dynamic = 'force-dynamic';
 
+const YT_PLAYER_CLIENTS = ["android", "web", "default"];
+
+async function runYtDlp<T>(target: string, options: Record<string, unknown>): Promise<T> {
+  let lastError: unknown;
+  for (const client of YT_PLAYER_CLIENTS) {
+    const opts: Record<string, unknown> = { ...options };
+    if (client !== "default") {
+      opts.extractorArgs = `youtube:player_client=${client}`;
+    }
+    try {
+      return (await ytDlp(target, opts)) as T;
+    } catch (err) {
+      lastError = err;
+      console.error(
+        `yt-dlp failed with player client "${client}" for ${target}:`,
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
+  throw lastError;
+}
+
 interface YtDlpFormat {
   url?: string;
   vcodec?: string;
@@ -216,11 +238,11 @@ export async function POST(req: NextRequest) {
       // --- Step 1: Extract metadata + direct stream URL using yt-dlp ---
       let ytdlpResult: YtDlpResult | null = null;
       try {
-        ytdlpResult = (await ytDlp(searchString, {
+        ytdlpResult = await runYtDlp<YtDlpResult>(searchString, {
           dumpSingleJson: true,
           noCheckCertificate: true,
           noWarnings: true,
-        })) as unknown as YtDlpResult;
+        });
       } catch (err) {
         console.error("yt-dlp URL extraction failed:", err);
         return NextResponse.json({ error: "Failed to extract media from this URL. It may be unsupported or private." }, { status: 400 });
@@ -310,12 +332,12 @@ export async function POST(req: NextRequest) {
           // Try yt-dlp search with a 5-second timeout race
           (async () => {
             const ytdlpPromise = (async () => {
-              const results = (await ytDlp(`ytsearch5:${searchString}`, {
+              const results = await runYtDlp<YtDlpResult>(`ytsearch5:${searchString}`, {
                 dumpSingleJson: true,
                 noCheckCertificate: true,
                 noWarnings: true,
                 flatPlaylist: true,
-              })) as unknown as YtDlpResult;
+              });
               if (results && Array.isArray(results.entries) && results.entries.length > 0) {
                 return results.entries.map((entry) => ({
                   videoId: entry.id,

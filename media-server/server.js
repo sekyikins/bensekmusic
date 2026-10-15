@@ -7,10 +7,12 @@ import ytDlp from "yt-dlp-exec";
 import crypto from "crypto";
 import dotenv from "dotenv";
 
-dotenv.config();
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// dotenv only reads .env by default; also load .env.local so local overrides apply.
+dotenv.config({ path: path.join(__dirname, ".env.local") });
+dotenv.config({ path: path.join(__dirname, ".env") });
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -33,6 +35,44 @@ app.use("/downloads", express.static(DOWNLOADS_DIR, {
 // Map to track ongoing downloads to prevent duplicate parallel downloads
 const activeDownloads = new Map();
 
+const YT_PLAYER_CLIENTS = ["android", "web", "default"];
+
+async function runYtDlp(url, baseOptions) {
+  let lastError;
+  for (const client of YT_PLAYER_CLIENTS) {
+    const options = { ...baseOptions };
+    if (client !== "default") {
+      options.extractorArgs = `youtube:player_client=${client}`;
+    }
+    try {
+      return await ytDlp(url, options);
+    } catch (err) {
+      lastError = err;
+      console.warn(
+        `yt-dlp failed with player client "${client}": ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+  throw lastError;
+}
+
+const urlLocks = new Map();
+
+async function acquireUrlLock(url) {
+  while (urlLocks.has(url)) {
+    await urlLocks.get(url).catch(() => {});
+  }
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  urlLocks.set(url, gate);
+  return () => {
+    urlLocks.delete(url);
+    release();
+  };
+}
+
 // Helper to find fully completed files matching the hash (ignoring .part, .ytdl, and split download components)
 function findCompletedFile(files, hash) {
   // First, look for a completed file that matches the hash, has only one dot (clean extension like hash.mp4, hash.webm), and is not a part/temp file
@@ -50,64 +90,53 @@ function findCompletedFile(files, hash) {
   return files.find((f) => f.startsWith(hash) && !f.endsWith(".part") && !f.endsWith(".ytdl"));
 }
 
-// Media check and download trigger endpoint
-app.get("/api/download", async (req, res) => {
-  try {
-    const url = req.query.url;
-    const type = req.query.type;
-    
-    if (!url) {
-      return res.status(400).json({ error: "Missing video URL" });
-    }
+function hashFor(url, mediaType) {
+  return crypto.createHash("md5").update(url + mediaType).digest("hex");
+}
 
-    const mediaType = type === "video" ? "video" : "audio";
-    
-    // Hash the URL + media type to create a unique identifier
-    const urlHash = crypto.createHash("md5").update(url + mediaType).digest("hex");
+// Report the current status of a media file without starting any work.
+function mediaInfo(url, mediaType) {
+  const urlHash = hashFor(url, mediaType);
+  const files = fs.readdirSync(DOWNLOADS_DIR);
+  const existingFile = findCompletedFile(files, urlHash);
 
-    // Check if the file is already downloaded (any extension matching the hash)
-    const files = fs.readdirSync(DOWNLOADS_DIR);
-    const existingFile = findCompletedFile(files, urlHash);
-    
-    if (existingFile) {
-      return res.json({
-        url: `${BASE_URL}/downloads/${existingFile}`,
-        status: "cached",
-        filename: existingFile
-      });
-    }
+  if (existingFile) {
+    return {
+      status: "ready",
+      url: `${BASE_URL}/downloads/${existingFile}`,
+      filename: existingFile
+    };
+  }
+  if (activeDownloads.has(urlHash)) {
+    return { status: "downloading" };
+  }
+  return { status: "idle" };
+}
 
-    // Check if this file is currently being downloaded by another request
-    if (activeDownloads.has(urlHash)) {
-      console.log(`Waiting for ongoing download of: ${urlHash}`);
-      await activeDownloads.get(urlHash);
-      
-      const updatedFiles = fs.readdirSync(DOWNLOADS_DIR);
-      const finishedFile = findCompletedFile(updatedFiles, urlHash);
-      if (finishedFile) {
-        return res.json({
-          url: `${BASE_URL}/downloads/${finishedFile}`,
-          status: "downloaded",
-          filename: finishedFile
-        });
-      }
-      throw new Error("Download completed but file could not be found.");
-    }
+// Start downloading a media file in the background (no-op if cached or already running).
+function startDownload(url, mediaType) {
+  const urlHash = hashFor(url, mediaType);
 
-    // Start a new download and store the promise in the map
-    const outputTemplate = path.join(DOWNLOADS_DIR, `${urlHash}.%(ext)s`);
-    
-    const downloadPromise = (async () => {
-      console.log(`Starting download for ${mediaType}: ${url}`);
+  const files = fs.readdirSync(DOWNLOADS_DIR);
+  if (findCompletedFile(files, urlHash)) return; // already cached
+  if (activeDownloads.has(urlHash)) return; // already in progress
+
+  const outputTemplate = path.join(DOWNLOADS_DIR, `${urlHash}.%(ext)s`);
+
+  const task = (async () => {
+    console.log(`Starting download for ${mediaType}: ${url}`);
+    // Serialize per-URL so audio + video downloads don't hit YouTube together.
+    const release = await acquireUrlLock(url);
+    try {
       if (mediaType === "audio") {
-        await ytDlp(url, {
+        await runYtDlp(url, {
           output: outputTemplate,
           format: "bestaudio/best",
           noCheckCertificate: true,
           noWarnings: true,
         });
       } else {
-        await ytDlp(url, {
+        await runYtDlp(url, {
           output: outputTemplate,
           format: "best[height<=480][ext=mp4]/best[height<=720][ext=mp4]/best",
           noCheckCertificate: true,
@@ -115,38 +144,35 @@ app.get("/api/download", async (req, res) => {
         });
       }
       console.log(`Finished download for ${mediaType}: ${urlHash}`);
-    })();
-
-    activeDownloads.set(urlHash, downloadPromise);
-
-    try {
-      await downloadPromise;
     } finally {
-      activeDownloads.delete(urlHash);
+      release();
     }
+  })();
 
-    // Find the downloaded file to return its actual extension/name
-    const updatedFiles = fs.readdirSync(DOWNLOADS_DIR);
-    const downloadedFile = findCompletedFile(updatedFiles, urlHash);
-    
-    if (!downloadedFile) {
-      throw new Error("File not found on disk after download completion.");
-    }
+  activeDownloads.set(urlHash, task);
+  task.catch((err) => {
+    console.error(`Download failed for ${urlHash}:`, err instanceof Error ? err.message : err);
+  });
+  task.finally(() => {
+    activeDownloads.delete(urlHash);
+  });
+}
 
-    return res.json({
-      url: `http://localhost:${PORT}/downloads/${downloadedFile}`,
-      status: "downloaded",
-      filename: downloadedFile
-    });
+// Kick off a download and immediately report status (does NOT block until finished).
+app.get("/api/download", (req, res) => {
+  const url = req.query.url;
+  const type = req.query.type;
 
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error("Download endpoint error:", msg);
-    return res.status(500).json({ error: msg });
+  if (!url) {
+    return res.status(400).json({ error: "Missing video URL" });
   }
+
+  const mediaType = type === "video" ? "video" : "audio";
+  startDownload(String(url), mediaType);
+  return res.json(mediaInfo(String(url), mediaType));
 });
 
-// Endpoint to status check or trigger download asynchronously
+// Read-only status check (never starts a download).
 app.get("/api/status", (req, res) => {
   const url = req.query.url;
   const type = req.query.type;
@@ -154,18 +180,7 @@ app.get("/api/status", (req, res) => {
     return res.status(400).json({ error: "Missing video URL" });
   }
   const mediaType = type === "video" ? "video" : "audio";
-  const urlHash = crypto.createHash("md5").update(url + mediaType).digest("hex");
-
-  const files = fs.readdirSync(DOWNLOADS_DIR);
-  const existingFile = findCompletedFile(files, urlHash);
-  
-  if (existingFile) {
-    return res.json({ status: "ready", url: `${BASE_URL}/downloads/${existingFile}` });
-  } else if (activeDownloads.has(urlHash)) {
-    return res.json({ status: "downloading" });
-  } else {
-    return res.json({ status: "idle" });
-  }
+  return res.json(mediaInfo(String(url), mediaType));
 });
 
 // Health check endpoint
@@ -181,12 +196,12 @@ setInterval(() => {
   try {
     const files = fs.readdirSync(DOWNLOADS_DIR);
     const now = Date.now();
-    
+
     files.forEach((file) => {
       const filePath = path.join(DOWNLOADS_DIR, file);
       const stats = fs.statSync(filePath);
       const age = now - stats.mtimeMs;
-      
+
       if (age > MAX_FILE_AGE) {
         fs.unlinkSync(filePath);
         console.log(`Cleaned up old cached file: ${file}`);

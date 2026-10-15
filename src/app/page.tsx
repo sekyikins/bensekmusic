@@ -34,6 +34,14 @@ export default function Home() {
   const [isFocused, setIsFocused] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
 
+  // Media preparation state. Files are downloaded on the media server first, then
+  // the players point at the cached file, so playback requests stay fast.
+  const [audioSrc, setAudioSrc] = useState<string | null>(null);
+  const [videoSrc, setVideoSrc] = useState<string | null>(null);
+  const [audioReady, setAudioReady] = useState(false);
+  const [videoReady, setVideoReady] = useState(false);
+  const [mediaError, setMediaError] = useState<string | null>(null);
+
   // Volume and player settings states
   const [volume, setVolume] = useState<number>(() => {
     if (typeof window !== "undefined") {
@@ -122,13 +130,19 @@ export default function Home() {
         const res = await fetch(
           `/api/lyrics?title=${encodeURIComponent(title)}&artist=${encodeURIComponent(artist)}&duration=${duration}`
         );
-        if (!res.ok) throw new Error("Lyrics not found");
+
+        if (res.status === 404) {
+          setLyrics(null);
+          setSyncedLyrics(null);
+          return;
+        }
+
+        if (!res.ok) throw new Error(`Lyrics request failed (${res.status})`);
 
         const data = await res.json();
-        if (data.error) throw new Error(data.error);
 
-        setLyrics(data.lyrics);
-        setSyncedLyrics(data.syncedLyrics);
+        setLyrics(data.lyrics ?? null);
+        setSyncedLyrics(data.syncedLyrics ?? null);
       } catch (err) {
         console.error("Error loading lyrics:", err);
         setLyrics(null);
@@ -139,6 +153,75 @@ export default function Home() {
     };
 
     loadLyrics();
+  }, [selectedResult]);
+
+  useEffect(() => {
+    if (!selectedResult) return;
+
+    const target = selectedResult;
+    let cancelled = false;
+
+    const prepare = async (type: "audio" | "video") => {
+      if (type === "audio") {
+        setAudioReady(false);
+        setAudioSrc(null);
+      } else {
+        setVideoReady(false);
+        setVideoSrc(null);
+      }
+      setMediaError(null);
+
+      await fetch("/api/prepare", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: target.url, type }),
+      });
+
+      for (let attempt = 0; attempt < 120; attempt++) {
+        if (cancelled) return false;
+        const res = await fetch(
+          `/api/prepare?url=${encodeURIComponent(target.url)}&type=${type}`
+        );
+        const data = await res.json().catch(() => ({}));
+        if (data.status === "ready") return true;
+        if (data.error) throw new Error(data.error);
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+      throw new Error("Timed out preparing media");
+    };
+
+    const filenameBase = `${target.title} -by- ${target.artist} - SekMusic`;
+    const srcFor = (type: "audio" | "video") =>
+      `/api/download?url=${encodeURIComponent(target.url)}&type=${type}&filename=${encodeURIComponent(filenameBase)}`;
+
+    prepare("audio")
+      .then((ok) => {
+        if (!cancelled && ok) {
+          setAudioSrc(srcFor("audio"));
+          setAudioReady(true);
+        }
+      })
+      .catch((err) => {
+        console.error("Audio preparation failed:", err);
+        if (!cancelled) {
+          setMediaError(err instanceof Error ? err.message : "Failed to prepare audio");
+        }
+      });
+
+    prepare("video")
+      .then((ok) => {
+        if (!cancelled && ok) {
+          setVideoSrc(srcFor("video"));
+          setVideoReady(true);
+        }
+      })
+      .catch((err) => {
+        console.error("Video preparation failed:", err);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [selectedResult]);
 
   // Copy state: null | "current" | "timed" | "plain"
@@ -802,7 +885,8 @@ export default function Home() {
                         <button 
                           type="button"
                           onClick={togglePlay}
-                          className="absolute bottom-4 right-4 bg-white/20 hover:bg-white/30 backdrop-blur-md p-3 rounded-full transition-transform hover:scale-110 active:scale-95 text-white shadow-lg z-20 cursor-pointer"
+                          disabled={!audioReady && !videoReady}
+                          className="absolute bottom-4 right-4 bg-white/20 hover:bg-white/30 backdrop-blur-md p-3 rounded-full transition-transform hover:scale-110 active:scale-95 text-white shadow-lg z-20 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
                         >
                           {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6" />}
                         </button>
@@ -879,10 +963,22 @@ export default function Home() {
                           controlsList="nodownload"
                           preload="metadata"
                           className="w-full outline-none h-12 relative z-10 filter invert grayscale opacity-90"
-                          src={`/api/download?url=${encodeURIComponent(selectedResult.url)}&type=audio&filename=${encodeURIComponent(`${selectedResult.title} -by- ${selectedResult.artist} - SekMusic`)}`}
+                          src={audioSrc ?? undefined}
                         >
                           Your browser does not support the audio element.
                         </audio>
+                        {!audioReady && (
+                          <div className="absolute inset-0 z-20 flex items-center justify-center gap-2 text-xs font-medium text-gray-300 bg-black/60 backdrop-blur-sm rounded-2xl">
+                            {mediaError ? (
+                              <span className="text-red-400 px-4 text-center">{mediaError}</span>
+                            ) : (
+                              <>
+                                <Loader2 className="w-4 h-4 animate-spin text-pink-400" />
+                                <span>Preparing audio…</span>
+                              </>
+                            )}
+                          </div>
+                        )}
                       </div>
 
                       {/* Visualizer Canvas */}
@@ -1034,7 +1130,7 @@ export default function Home() {
                   {/* Video Player & Downloads — always visible */}
                   <div className="space-y-6 pt-6 border-t border-white/10">
                     {/* Video Player */}
-                    <div className="w-full bg-black/60 rounded-3xl p-3 border border-white/5 shadow-inner">
+                    <div className="w-full bg-black/60 rounded-3xl p-3 border border-white/5 shadow-inner relative">
                       <video
                         ref={videoRef}
                         onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
@@ -1068,28 +1164,42 @@ export default function Home() {
                         preload="metadata"
                         poster={selectedResult.thumbnail}
                         className="w-full rounded-2xl aspect-video bg-black outline-none object-cover"
-                        src={`/api/download?url=${encodeURIComponent(selectedResult.url)}&type=video&filename=${encodeURIComponent(`${selectedResult.title} -by- ${selectedResult.artist} - SekMusic`)}`}
+                        src={videoSrc ?? undefined}
                       >
                         Your browser does not support the video element.
                       </video>
+                      {!videoReady && (
+                        <div className="absolute inset-3 z-20 flex items-center justify-center gap-2 text-sm font-medium text-gray-300 bg-black/60 backdrop-blur-sm rounded-2xl">
+                          {mediaError ? (
+                            <span className="text-red-400 px-4 text-center">Video unavailable</span>
+                          ) : (
+                            <>
+                              <Loader2 className="w-4 h-4 animate-spin text-pink-400" />
+                              <span>Preparing video…</span>
+                            </>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <motion.a
                         whileHover={{ scale: 1.02 }}
                         whileTap={{ scale: 0.98 }}
+                        onClick={(e) => { if (!audioReady) e.preventDefault(); }}
                         href={`/api/download?url=${encodeURIComponent(selectedResult.url)}&type=audio&dl=1&filename=${encodeURIComponent(`${selectedResult.title} -by- ${selectedResult.artist} - SekMusic`)}`}
                         download={`${selectedResult.title} -by- ${selectedResult.artist} - SekMusic.m4a`}
-                        className="bg-white text-black py-4 rounded-2xl font-bold flex items-center justify-center gap-3 shadow-[0_0_20px_rgba(255,255,255,0.2)] hover:shadow-[0_0_30px_rgba(255,255,255,0.4)] transition-shadow"
+                        className={`bg-white text-black py-4 rounded-2xl font-bold flex items-center justify-center gap-3 shadow-[0_0_20px_rgba(255,255,255,0.2)] hover:shadow-[0_0_30px_rgba(255,255,255,0.4)] transition-shadow ${audioReady ? "" : "pointer-events-none opacity-50"}`}
                       >
                         <Download className="w-5 h-5" /> Download Audio
                       </motion.a>
                       <motion.a
                         whileHover={{ scale: 1.02 }}
                         whileTap={{ scale: 0.98 }}
+                        onClick={(e) => { if (!videoReady) e.preventDefault(); }}
                         href={`/api/download?url=${encodeURIComponent(selectedResult.url)}&type=video&dl=1&filename=${encodeURIComponent(`${selectedResult.title} -by- ${selectedResult.artist} - SekMusic`)}`}
                         download={`${selectedResult.title} -by- ${selectedResult.artist} - SekMusic.mp4`}
-                        className="bg-white/5 border border-white/10 text-white hover:bg-white/10 py-4 rounded-2xl font-bold flex items-center justify-center gap-3 backdrop-blur-md transition-colors"
+                        className={`bg-white/5 border border-white/10 text-white hover:bg-white/10 py-4 rounded-2xl font-bold flex items-center justify-center gap-3 backdrop-blur-md transition-colors ${videoReady ? "" : "pointer-events-none opacity-50"}`}
                       >
                         <Download className="w-5 h-5" /> Download Video
                       </motion.a>
