@@ -19,9 +19,9 @@ export default function SearchResults() {
       className="w-full space-y-4 relative z-10"
     >
       <div className="flex items-center gap-3 mb-6">
-        <div className="h-px bg-linear-to-r from-transparent to-white/20 flex-1" />
-        <h3 className="text-sm uppercase tracking-widest font-bold text-gray-400">Search Results</h3>
-        <div className="h-px bg-linear-to-l from-transparent to-white/20 flex-1" />
+        <div className="h-px bg-linear-to-r from-transparent to-surface-4 flex-1" />
+        <h3 className="text-sm uppercase tracking-widest font-bold text-fg-muted">Search Results</h3>
+        <div className="h-px bg-linear-to-l from-transparent to-surface-4 flex-1" />
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

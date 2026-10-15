@@ -8,7 +8,7 @@ export const metadata: Metadata = {
 export default function PrivacyPage() {
   return (
     <div className="min-h-[calc(100vh-100px)] py-20 px-4">
-      <div className="max-w-4xl mx-auto bg-white/5 border border-white/10 backdrop-blur-md rounded-3xl p-8 sm:p-12 text-gray-300 shadow-xl">
+      <div className="max-w-4xl mx-auto glass-card rounded-3xl p-8 sm:p-12 text-fg-soft shadow-xl">
         <h1 className="text-3xl sm:text-4xl font-extrabold text-white mb-8">Privacy Policy</h1>
 
         <div className="space-y-6 text-sm sm:text-base leading-relaxed">
@@ -41,7 +41,7 @@ export default function PrivacyPage() {
 
           <h2 className="text-xl font-bold text-white mt-8 mb-4">5. Contact Us</h2>
           <p>
-            If you have any questions about this Privacy Policy, please contact us at <a href="mailto:contact@sekmusic.com" className="text-pink-400 hover:underline">contact@sekmusic.com</a>.
+            If you have any questions about this Privacy Policy, please contact us at <a href="mailto:contact@sekmusic.com" className="text-brand-soft hover:underline">contact@sekmusic.com</a>.
           </p>
         </div>
       </div>

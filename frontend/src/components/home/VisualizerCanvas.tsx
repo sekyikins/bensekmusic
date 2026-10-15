@@ -8,7 +8,7 @@ export default function VisualizerCanvas() {
   return (
     <canvas
       ref={canvasRef}
-      className="w-full h-10 rounded-xl bg-black/40 border border-white/5 mt-4"
+      className="w-full h-10 rounded-xl bg-panel border border-line-soft mt-4"
     />
   );
 }

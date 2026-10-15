@@ -14,13 +14,13 @@ export default function HistoryList() {
   return (
     <motion.div variants={itemVariants} className="w-full mt-10 space-y-4 animate-fadeIn">
       <div className="flex items-center gap-3">
-        <History className="w-4 h-4 text-pink-400" />
-        <h3 className="text-sm uppercase tracking-widest font-bold text-gray-400">Recently Processed</h3>
-        <div className="h-px bg-linear-to-r from-transparent to-white/10 flex-1" />
+        <History className="w-4 h-4 text-brand-soft" />
+        <h3 className="text-sm uppercase tracking-widest font-bold text-fg-muted">Recently Processed</h3>
+        <div className="h-px bg-linear-to-r from-transparent to-surface-2 flex-1" />
         <button
           type="button"
           onClick={clearHistory}
-          className="text-xs text-gray-500 hover:text-pink-400 transition-colors cursor-pointer"
+          className="text-xs text-fg-subtle hover:text-brand-soft transition-colors cursor-pointer"
         >
           Clear
         </button>

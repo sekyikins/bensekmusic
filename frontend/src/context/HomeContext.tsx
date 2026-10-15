@@ -14,6 +14,7 @@ import {
 } from "react";
 import type { SearchResult } from "@/lib/types";
 import { findActiveLineIndex, parseSyncedLyrics, type ParsedLyricLine } from "@/lib/lyrics";
+import { CANVAS_GRADIENT, cssVar } from "@/lib/theme";
 
 export type CopyState = null | "current" | "timed" | "plain";
 export type ActiveTab = "player" | "lyrics";
@@ -98,6 +99,10 @@ function useHomeState() {
     const bufferLength = analyser.frequencyBinCount;
     const dataArray = new Uint8Array(bufferLength);
 
+    // Pull the brand gradient stops from the design tokens (single source of truth).
+    const gradientFrom = cssVar(CANVAS_GRADIENT.from.token, CANVAS_GRADIENT.from.fallback);
+    const gradientTo = cssVar(CANVAS_GRADIENT.to.token, CANVAS_GRADIENT.to.fallback);
+
     const renderFrame = () => {
       animationRef.current = requestAnimationFrame(renderFrame);
       analyser.getByteFrequencyData(dataArray);
@@ -113,8 +118,8 @@ function useHomeState() {
       for (let i = 0; i < bufferLength; i++) {
         barHeight = (dataArray[i] / 255) * height * 0.8;
         const gradient = ctx.createLinearGradient(0, height, 0, height - barHeight);
-        gradient.addColorStop(0, "#a855f7"); // purple
-        gradient.addColorStop(1, "#ec4899"); // pink
+        gradient.addColorStop(0, gradientFrom);
+        gradient.addColorStop(1, gradientTo);
 
         ctx.fillStyle = gradient;
         ctx.fillRect(x, height - barHeight, barWidth - 2, barHeight);

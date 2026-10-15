@@ -17,8 +17,8 @@ export default function AudioPlayer() {
   } = useHome();
 
   return (
-    <div className="bg-white/5 rounded-2xl p-2 sm:p-3 border border-white/5 shadow-inner backdrop-blur-md relative overflow-hidden group">
-      <div className="absolute inset-0 bg-linear-to-r from-pink-500/10 to-purple-500/10 opacity-0 group-hover:opacity-100 transition-opacity" />
+    <div className="glass-card border-line-soft rounded-2xl p-2 sm:p-3 shadow-inner relative overflow-hidden group">
+      <div className="absolute inset-0 bg-linear-to-r from-brand/10 to-brand-purple/10 opacity-0 group-hover:opacity-100 transition-opacity" />
       <audio
         ref={audioRef}
         onPlay={() => handleMediaPlay("audio")}
@@ -35,12 +35,12 @@ export default function AudioPlayer() {
         Your browser does not support the audio element.
       </audio>
       {!audioReady && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center gap-2 text-xs font-medium text-gray-300 bg-black/60 backdrop-blur-sm rounded-2xl">
+        <div className="absolute inset-0 z-20 flex items-center justify-center gap-2 text-xs font-medium text-fg-soft bg-panel-strong backdrop-blur-sm rounded-2xl">
           {mediaError ? (
-            <span className="text-red-400 px-4 text-center">{mediaError}</span>
+            <span className="text-danger-soft px-4 text-center">{mediaError}</span>
           ) : (
             <>
-              <Loader2 className="w-4 h-4 animate-spin text-pink-400" />
+              <Loader2 className="w-4 h-4 animate-spin text-brand-soft" />
               <span>Preparing audio…</span>
             </>
           )}

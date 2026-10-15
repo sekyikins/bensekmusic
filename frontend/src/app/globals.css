@@ -52,6 +52,53 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+
+  --color-brand-faint: #f9a8d4; 
+  --color-brand-soft: #f472b6; 
+  --color-brand: #ec4899; 
+  --color-brand-deep: #db2777; 
+  --color-brand-purple-soft: #c084fc; 
+  --color-brand-purple: #a855f7; 
+  --color-brand-purple-deep: #9333ea; 
+  --color-brand-rose-soft: #fb7185; 
+  --color-brand-rose: #f43f5e; 
+  --color-brand-blue: #60a5fa; 
+  --color-ambient: rgba(88, 28, 135, 0.2); 
+  --color-surface: rgba(255, 255, 255, 0.05);
+  --color-surface-2: rgba(255, 255, 255, 0.1);
+  --color-surface-3: rgba(255, 255, 255, 0.15);
+  --color-surface-4: rgba(255, 255, 255, 0.2);
+  --color-surface-5: rgba(255, 255, 255, 0.3);
+  --color-surface-hover: rgba(255, 255, 255, 0.08);
+
+  --color-line-soft: rgba(255, 255, 255, 0.05);
+  --color-line: rgba(255, 255, 255, 0.1);
+  --color-line-strong: rgba(255, 255, 255, 0.2);
+  --color-panel-soft: rgba(0, 0, 0, 0.2);
+  --color-panel: rgba(0, 0, 0, 0.4);
+  --color-panel-2: rgba(0, 0, 0, 0.5);
+  --color-panel-strong: rgba(0, 0, 0, 0.6);
+  --color-panel-heavy: rgba(0, 0, 0, 0.8);
+  --color-panel-max: rgba(0, 0, 0, 0.9);
+
+  --color-youtube: #ff0000;
+  --color-spotify: #1db954;
+  --color-apple: #fa243c;
+  --color-fg-soft: #d1d5db; 
+  --color-fg-muted: #9ca3af; 
+  --color-fg-subtle: #6b7280; 
+  --color-fg-faint: #4b5563; 
+  --color-fg-ghost: #374151; 
+  --color-danger: #ef4444; 
+  --color-danger-soft: #f87171; 
+  --color-success: #4ade80; 
+  --color-glow-2: rgba(236, 72, 153, 0.2);
+  --color-glow: rgba(236, 72, 153, 0.3);
+  --color-glow-strong: rgba(236, 72, 153, 0.4);
+  --color-glow-max: rgba(236, 72, 153, 0.5);
+  --color-white-glow-soft: rgba(255, 255, 255, 0.2);
+  --color-white-glow: rgba(255, 255, 255, 0.4);
+  --color-danger-glow: rgba(239, 68, 68, 0.2);
 }
 
 @layer base {
@@ -62,34 +109,83 @@
   }
 }
 
-.glass-panel {
-  background: rgba(20, 20, 20, 0.4);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-}
+@layer components {
+  .glass-card {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-line);
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+  }
 
-.gradient-text {
-  background: linear-gradient(to right, #a855f7, #ec4899, #f43f5e);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  color: transparent;
-}
+  .panel-card {
+    background-color: var(--color-panel);
+    border: 1px solid var(--color-line-soft);
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+  }
 
-@keyframes float {
-  0% { transform: translateY(0px); }
-  50% { transform: translateY(-10px); }
-  100% { transform: translateY(0px); }
-}
+  .app-bar {
+    background-color: var(--color-panel);
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+  }
 
-.animate-float {
-  animation: float 6s ease-in-out infinite;
+  .chip {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-line);
+  }
+  .icon-button {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-line);
+  }
+
+  .btn-primary {
+    background-color: #fff;
+    color: #000;
+    font-weight: 700;
+  }
+
+  .text-gradient-brand {
+    background-image: linear-gradient(
+      to right,
+      var(--color-brand-purple-soft),
+      var(--color-brand),
+      var(--color-brand-rose)
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .text-gradient-white {
+    background-image: linear-gradient(to bottom right, #fff, #fff, #6b7280);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .ambient-bg {
+    background-image: linear-gradient(to bottom, var(--color-ambient), transparent);
+  }
+  .glow-brand {
+    box-shadow: 0 0 40px -10px var(--color-glow);
+  }
+
+  .text-glow-brand {
+    filter: drop-shadow(0 0 30px var(--color-glow-strong));
+  }
 }
 
 @keyframes pulse-glow {
-  0%, 100% { opacity: 0.5; transform: scale(1); }
-  50% { opacity: 0.8; transform: scale(1.05); }
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(1.05);
+  }
 }
 
 .animate-pulse-glow {
