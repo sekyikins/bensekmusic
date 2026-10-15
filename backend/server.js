@@ -13,6 +13,14 @@ const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.join(__dirname, ".env.local") });
 dotenv.config({ path: path.join(__dirname, ".env") });
 
+// Never let a stray async error take the whole media engine offline.
+process.on("unhandledRejection", (reason) => {
+  console.error("[unhandledRejection]", reason instanceof Error ? reason.stack : reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[uncaughtException]", err instanceof Error ? err.stack : err);
+});
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 const BASE_URL =
@@ -33,8 +41,81 @@ app.use("/downloads", express.static(DOWNLOADS_DIR, {
 }));
 
 const activeDownloads = new Map();
+// Remembers the last failure per media hash so /api/status can surface a real
+// error to the client instead of letting it poll until it times out.
+const failedDownloads = new Map();
 
-const YT_PLAYER_CLIENTS = ["android", "web", "default"];
+// Ordered roughly by likelihood of working from a cloud/datacenter IP without
+// a PO Token or cookies. See https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide
+const YT_PLAYER_CLIENTS = [
+  "default",
+  "android_vr",
+  "tv_simply",
+  "web_embedded",
+  "tv",
+  "mweb",
+  "android",
+];
+
+// ---------------------------------------------------------------------------
+// Optional auth for yt-dlp. YouTube blocks many datacenter/cloud IPs with
+// "Sign in to confirm you're not a bot". Provide cookies via ANY of:
+//   * YTDLP_COOKIES      -> raw Netscape cookie text OR its base64 encoding
+//   * YTDLP_COOKIES_PATH -> absolute path to a cookies.txt file
+//   * backend/cookies.txt -> a file placed next to server.js
+// Optionally route yt-dlp through a proxy with YTDLP_PROXY.
+// ---------------------------------------------------------------------------
+const COOKIES_TMP = path.join(__dirname, ".yt-dlp-cookies.txt");
+
+function resolveCookiesFile() {
+  const explicit = process.env.YTDLP_COOKIES_PATH || process.env.YT_DLP_COOKIES_PATH;
+  if (explicit) {
+    if (fs.existsSync(explicit)) return explicit;
+    console.warn(`[yt-dlp] YTDLP_COOKIES_PATH set but file not found: ${explicit}`);
+  }
+
+  const inline = process.env.YTDLP_COOKIES;
+  if (inline && inline.trim()) {
+    try {
+      let content = inline.trim();
+      // If it doesn't look like Netscape cookie text, try base64-decoding it.
+      if (!content.includes("\t") && !content.includes("# Netscape")) {
+        const decoded = Buffer.from(content, "base64").toString("utf8");
+        if (decoded.includes("\t") || decoded.includes("# Netscape")) content = decoded;
+      }
+      fs.writeFileSync(COOKIES_TMP, content, "utf8");
+      console.log("[yt-dlp] Wrote cookies from YTDLP_COOKIES env var");
+      return COOKIES_TMP;
+    } catch (err) {
+      console.error("[yt-dlp] Failed to write cookies from env:", err);
+    }
+  }
+
+  const local = path.join(__dirname, "cookies.txt");
+  if (fs.existsSync(local)) return local;
+
+  return null;
+}
+
+const RESOLVED_COOKIES = resolveCookiesFile();
+const YTDLP_PROXY = process.env.YTDLP_PROXY || process.env.YT_PROXY || null;
+
+if (RESOLVED_COOKIES) console.log(`[yt-dlp] Using cookies file: ${RESOLVED_COOKIES}`);
+if (YTDLP_PROXY) console.log(`[yt-dlp] Using proxy: ${YTDLP_PROXY}`);
+
+// Turn a raw execa/yt-dlp error into a short, user-facing message.
+function friendlyYtDlpError(err) {
+  const raw = err instanceof Error ? err.message : String(err);
+  const match = raw.match(/ERROR:\s*([\s\S]*?)(?:\n\s*\[|$)/);
+  const line = match && match[1] ? match[1].replace(/\[youtube\]\s*/g, "").trim() : raw;
+  if (/not a bot|sign in to confirm/i.test(line)) {
+    return "YouTube blocked this server's IP with a bot check. Set YTDLP_COOKIES on the server to authenticate.";
+  }
+  if (/video unavailable|private video|removed/i.test(line)) {
+    return "This video is unavailable, private, or removed.";
+  }
+  return line;
+}
 
 async function runYtDlp(url, baseOptions) {
   let lastError;
@@ -43,6 +124,8 @@ async function runYtDlp(url, baseOptions) {
     if (client !== "default") {
       options.extractorArgs = `youtube:player_client=${client}`;
     }
+    if (RESOLVED_COOKIES) options.cookies = RESOLVED_COOKIES;
+    if (YTDLP_PROXY) options.proxy = YTDLP_PROXY;
     try {
       return await ytDlp(url, options);
     } catch (err) {
@@ -52,7 +135,7 @@ async function runYtDlp(url, baseOptions) {
       );
     }
   }
-  throw lastError;
+  throw new Error(friendlyYtDlpError(lastError));
 }
 
 const INVIDIOUS_INSTANCES = [
@@ -392,6 +475,9 @@ function mediaInfo(url, mediaType) {
   if (activeDownloads.has(urlHash)) {
     return { status: "downloading" };
   }
+  if (failedDownloads.has(urlHash)) {
+    return { status: "error", error: failedDownloads.get(urlHash) };
+  }
   return { status: "idle" };
 }
 
@@ -402,6 +488,7 @@ function startDownload(url, mediaType) {
   const files = fs.readdirSync(DOWNLOADS_DIR);
   if (findCompletedFile(files, urlHash)) return; // already cached
   if (activeDownloads.has(urlHash)) return; // already in progress
+  failedDownloads.delete(urlHash); // clear previous failure so this is a fresh attempt
 
   const outputTemplate = path.join(DOWNLOADS_DIR, `${urlHash}.%(ext)s`);
 
@@ -432,12 +519,17 @@ function startDownload(url, mediaType) {
   })();
 
   activeDownloads.set(urlHash, task);
-  task.catch((err) => {
-    console.error(`Download failed for ${urlHash}:`, err instanceof Error ? err.message : err);
-  });
-  task.finally(() => {
-    activeDownloads.delete(urlHash);
-  });
+  task
+    .catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`Download failed for ${urlHash}:`, message);
+      failedDownloads.set(urlHash, message);
+    })
+    .finally(() => {
+      // Chained onto the *handled* promise: a failed download must never
+      // surface an unhandled rejection (that would crash the whole server).
+      activeDownloads.delete(urlHash);
+    });
 }
 
 // Kick off a download and immediately report status (does NOT block until finished).

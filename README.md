@@ -63,7 +63,9 @@ Open [http://localhost:3000](http://localhost:3000).
 ## Environment
 
 - `backend/.env.local` — `PORT` (default `3001`) and `BASE_URL` (public URL the
-  backend uses to build media links, e.g. `http://localhost:3001`).
+  backend uses to build media links, e.g. `http://localhost:3001`). Optional:
+  `YTDLP_COOKIES` / `YTDLP_COOKIES_PATH` / `YTDLP_PROXY` (see *YouTube blocks
+  cloud IPs* below).
 - `frontend/.env.local` — `NEXT_PUBLIC_MEDIA_SERVER_URL` pointing at the backend
   (defaults to `http://localhost:3001`).
 
@@ -100,13 +102,36 @@ The two halves deploy independently from this one repository; each host needs it
 | Build Command | `npm install` |
 | Start Command | `npm start` |
 | Health Check Path | `/health` |
-| Environment | `BASE_URL=https://<your-service>.onrender.com` |
+| Environment | `BASE_URL=https://<your-service>.onrender.com` *(optional — `RENDER_EXTERNAL_URL` is used automatically)* |
 
 - Do **not** set `PORT` — Render injects it.
 - If the build fails on `yt-dlp-exec`'s Python check, use:
   `npm install --ignore-scripts && node node_modules/yt-dlp-exec/scripts/postinstall.js`
 - The free instance type spins down after ~15 min idle; point an uptime monitor at
   `/health` (every ~10 min) to keep it warm.
+
+#### YouTube blocks cloud IPs
+
+YouTube commonly rejects datacenter IPs (Render, Railway, Fly, …) with
+*"Sign in to confirm you're not a bot"*. The backend tries several player clients,
+but if downloads still fail, give yt-dlp credentials via **one** of:
+
+| Env var | What it is |
+| --- | --- |
+| `YTDLP_COOKIES` | Contents of a Netscape `cookies.txt` (raw or base64) from a browser logged into YouTube |
+| `YTDLP_COOKIES_PATH` | Absolute path to a `cookies.txt` on the server |
+| `YTDLP_PROXY` | Proxy URL, e.g. `http://user:pass@host:port` (residential proxies work best) |
+
+Exporting cookies:
+
+```bash
+# Using yt-dlp itself (writes a Netscape cookies.txt):
+yt-dlp --cookies-from-browser chrome --cookies cookies.txt
+```
+
+Then set `YTDLP_COOKIES` on Render to the file contents (base64-encoding avoids
+newline problems). Cookies expire, so re-export periodically. For a long-term
+fix, see the [yt-dlp PO Token Guide](https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide).
 
 ### Frontend → Vercel
 
