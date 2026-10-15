@@ -15,24 +15,23 @@ dotenv.config({ path: path.join(__dirname, ".env") });
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
+const BASE_URL =
+  process.env.BASE_URL ||
+  process.env.RENDER_EXTERNAL_URL ||
+  `http://localhost:${PORT}`;
 
 app.use(cors());
 app.use(express.json());
 
-// Ensure downloads directory exists
 const DOWNLOADS_DIR = path.join(__dirname, "downloads");
 if (!fs.existsSync(DOWNLOADS_DIR)) {
   fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
 }
-
-// Serve downloads folder as static files (handles Range requests automatically)
 app.use("/downloads", express.static(DOWNLOADS_DIR, {
   acceptRanges: true,
   fallthrough: false
 }));
 
-// Map to track ongoing downloads to prevent duplicate parallel downloads
 const activeDownloads = new Map();
 
 const YT_PLAYER_CLIENTS = ["android", "web", "default"];
@@ -55,11 +54,6 @@ async function runYtDlp(url, baseOptions) {
   }
   throw lastError;
 }
-
-// ---------------------------------------------------------------------------
-// Search / metadata resolution (moved here from the frontend so that no
-// yt-dlp binary is ever required on Vercel — everything runs on this server).
-// ---------------------------------------------------------------------------
 
 const INVIDIOUS_INSTANCES = [
   "https://inv.thepixora.com",
