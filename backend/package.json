@@ -1,5 +1,5 @@
 {
-  "name": "sekmusic-media-server",
+  "name": "sekmusic-backend",
   "version": "1.0.0",
   "description": "Standalone media processing and stream serving engine using Express and yt-dlp",
   "type": "module",

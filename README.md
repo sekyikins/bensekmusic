@@ -1,36 +1,84 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# SekMusic
+
+Extract audio and video from streaming links, search tracks, and view synced
+lyrics. The project is split into a **Next.js frontend** and a standalone
+**Express + yt-dlp backend** that does the heavy media processing.
+
+## Structure
+
+```
+sekmusic/
+├── frontend/                       # Next.js (App Router) + TypeScript web client
+│   ├── src/
+│   │   ├── app/                    # Routes: pages + API routes (/api/*)
+│   │   │   ├── api/                # download, prepare, process, lyrics, recognize
+│   │   │   ├── page.tsx            # Home — thin wrapper around the provider
+│   │   │   ├── layout.tsx
+│   │   │   └── about | contact | privacy | terms
+│   │   ├── components/
+│   │   │   └── home/               # Hero, SearchBar, HistoryList, SearchResults,
+│   │   │                           # PlayerSection, LyricsPanel, Audio/Video,
+│   │   │                           # TrackCard, DownloadButtons, ExternalLinks…
+│   │   ├── context/
+│   │   │   └── HomeContext.tsx     # All home state/logic (useHome provider)
+│   │   └── lib/                    # format, lyrics parsing, motion variants, types
+│   ├── public/
+│   ├── next.config.ts
+│   ├── tsconfig.json
+│   └── package.json
+│
+├── backend/                        # Express media server (yt-dlp)
+│   ├── server.js                   # /api/download, /api/status
+│   ├── bin/                        # yt-dlp binary (gitignored)
+│   ├── downloads/                  # cached media (gitignored)
+│   └── package.json
+│
+├── .gitignore
+└── README.md
+```
 
 ## Getting Started
 
-First, run the development server:
+Install dependencies once in each app (they are separate packages):
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cd backend && npm install
+cd ../frontend && npm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Run each app in its own terminal:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+# Terminal 1 — media backend (defaults to http://localhost:3001)
+cd backend
+npm run dev        # nodemon server.js  (or: npm start)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+# Terminal 2 — web frontend (http://localhost:3000)
+cd frontend
+npm run dev
+```
 
-## Learn More
+Open [http://localhost:3000](http://localhost:3000).
 
-To learn more about Next.js, take a look at the following resources:
+## Environment
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- `backend/.env.local` — `PORT` (default `3001`) and `BASE_URL` (public URL the
+  backend uses to build media links, e.g. `http://localhost:3001`).
+- `frontend/.env.local` — `NEXT_PUBLIC_MEDIA_SERVER_URL` pointing at the backend
+  (defaults to `http://localhost:3001`).
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Both `.env*` files are gitignored; see the matching `.env.example` in each app.
 
-## Deploy on Vercel
+## How downloading works
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+1. The frontend asks `/api/prepare` to start a job on the backend for a track.
+2. The backend downloads with `yt-dlp` in the background and returns immediately.
+3. The frontend polls `/api/prepare` until the media reports `ready`.
+4. The player and download links then point at `/api/download`, which proxies the
+   cached file from the backend (supports HTTP Range/seek).
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Deploy
+
+The web app deploys to Vercel from the `frontend/` directory — set the project
+**Root Directory** to `frontend`. The backend must be hosted separately (it needs
+`yt-dlp` and persistent disk for the media cache).
