@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
     const mediaType = normalizeType(type);
     const res = await fetch(
       `${MEDIA_SERVER_URL}/api/download?url=${encodeURIComponent(url)}&type=${mediaType}`,
-      { signal: AbortSignal.timeout(15_000) }
+      { signal: AbortSignal.timeout(55_000) }
     );
 
     const data = await res.json().catch(() => ({}));

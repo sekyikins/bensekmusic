@@ -28,7 +28,7 @@ sekmusic/
 │   └── package.json
 │
 ├── backend/                        # Express media server (yt-dlp)
-│   ├── server.js                   # /api/download, /api/status
+│   ├── server.js                   # /api/process, /api/download, /api/status
 │   ├── bin/                        # yt-dlp binary (gitignored)
 │   ├── downloads/                  # cached media (gitignored)
 │   └── package.json
@@ -77,8 +77,42 @@ Both `.env*` files are gitignored; see the matching `.env.example` in each app.
 4. The player and download links then point at `/api/download`, which proxies the
    cached file from the backend (supports HTTP Range/seek).
 
+## Who runs yt-dlp
+
+**Only the backend does.** The frontend never installs or executes `yt-dlp`:
+
+- `/api/process` (search + link resolution) → proxied to the backend `/api/process`.
+- `/api/prepare` + `/api/download` → proxied to the backend.
+- `/api/lyrics` (LRCLIB) and `/api/recognize` (AudD) call external HTTPS APIs directly.
+
+This keeps the Vercel deployment free of native binaries.
+
 ## Deploy
 
-The web app deploys to Vercel from the `frontend/` directory — set the project
-**Root Directory** to `frontend`. The backend must be hosted separately (it needs
-`yt-dlp` and persistent disk for the media cache).
+The two halves deploy independently from this one repository; each host needs its
+**Root Directory** set to its subfolder.
+
+### Backend → Render
+
+| Setting | Value |
+| --- | --- |
+| Root Directory | `backend` |
+| Build Command | `npm install` |
+| Start Command | `npm start` |
+| Health Check Path | `/health` |
+| Environment | `BASE_URL=https://<your-service>.onrender.com` |
+
+- Do **not** set `PORT` — Render injects it.
+- If the build fails on `yt-dlp-exec`'s Python check, use:
+  `npm install --ignore-scripts && node node_modules/yt-dlp-exec/scripts/postinstall.js`
+- The free instance type spins down after ~15 min idle; point an uptime monitor at
+  `/health` (every ~10 min) to keep it warm.
+
+### Frontend → Vercel
+
+| Setting | Value |
+| --- | --- |
+| Root Directory | `frontend` |
+| Environment | `NEXT_PUBLIC_MEDIA_SERVER_URL=https://<your-render-service>.onrender.com` |
+
+Deploy the backend first so you know its URL, then set that variable on Vercel.
