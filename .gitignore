@@ -47,6 +47,12 @@ backend/.yt-dlp-cookies.txt
 *.tsbuildinfo
 next-env.d.ts
 
-# Media backend (yt-dlp binary + downloaded media cache)
+# Media backend (Python virtualenv + downloaded media cache)
+backend/.venv/
 backend/bin/
 backend/downloads
+
+# python
+__pycache__/
+*.py[cod]
+.venv/

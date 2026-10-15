@@ -1,0 +1,20 @@
+# SekMusic media engine — Python dependencies
+# Pinned for reproducible Render builds.
+
+fastapi==0.143.1
+uvicorn[standard]==0.54.0
+
+# Media extraction (newer than the old bundled yt-dlp binary).
+# [default] pulls the yt-dlp-ejs challenge solver scripts plus useful extractor
+# deps (mutagen, requests, websockets, ...) so YouTube's JS challenges can be
+# solved without downloading anything at runtime.
+yt-dlp[default]==2026.8.19
+
+# Bundled static ffmpeg + a JavaScript runtime so cloud hosts need no extra
+# system packages. yt-dlp uses deno to solve YouTube's player challenges.
+imageio-ffmpeg==0.6.0
+deno==2.9.7
+
+# Environment + HTTP client.
+python-dotenv==1.2.4
+httpx==0.28.1
