@@ -8,13 +8,13 @@ import SearchBar from "./SearchBar";
 import HistoryList from "./HistoryList";
 import SearchResults from "./SearchResults";
 import PlayerSection from "./PlayerSection";
+import ErrorBanner from "./ErrorBanner";
 
 export default function HomeContent() {
   const { error, results, selectedResult, loading } = useHome();
 
   return (
     <div className="min-h-[calc(100vh-100px)] flex flex-col items-center pt-24 pb-20 p-4 selection:bg-brand/30 relative">
-      {/* Dynamic Background Elements */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden -z-20">
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[80vw] h-[50vh] ambient-bg blur-3xl opacity-50" />
       </div>
@@ -31,19 +31,8 @@ export default function HomeContent() {
 
         <HistoryList />
 
-        {/* Results Section */}
         <AnimatePresence mode="wait">
-          {error && (
-            <motion.div
-              key="error"
-              initial={{ opacity: 0, y: 10, height: 0 }}
-              animate={{ opacity: 1, y: 0, height: "auto" }}
-              exit={{ opacity: 0, y: -10, height: 0 }}
-              className="p-4 bg-danger/10 border border-danger/30 rounded-2xl text-danger-soft w-full text-center font-medium shadow-lg backdrop-blur-sm"
-            >
-              {error}
-            </motion.div>
-          )}
+          {error && <ErrorBanner key="error" message={error} />}
 
           {results && !selectedResult && !loading && <SearchResults key="results" />}
 
